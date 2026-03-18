@@ -5,59 +5,53 @@ different perspectives and are coordinated via different strategies.
 """
 
 import asyncio
-import os
+from pathlib import Path
 
 from agent_harness import ConversationalAgent, HarnessConfig
-from agent_harness.llm import OpenAIProvider
-from agent_harness.core import LLMConfig
 from agent_harness.orchestration import AgentTeam, TeamMode
 
 
-def create_agents(llm: OpenAIProvider) -> tuple:
-    """Create the specialist agents and supervisor."""
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+AgentsTriple = tuple[ConversationalAgent, ConversationalAgent, ConversationalAgent]
+
+
+def create_agents(config: HarnessConfig) -> AgentsTriple:
+    """Create specialist worker agents."""
     optimist = ConversationalAgent(
         name="optimist",
-        llm=llm,
         system_prompt=(
             "You are an optimistic analyst. You always highlight opportunities, "
             "potential upsides, and reasons for enthusiasm. Keep it to 2-3 sentences."
         ),
+        config=config,
     )
 
     pessimist = ConversationalAgent(
         name="pessimist",
-        llm=llm,
         system_prompt=(
             "You are a cautious, risk-focused analyst. You highlight potential "
             "downsides, risks, and pitfalls. Keep it to 2-3 sentences."
         ),
+        config=config,
     )
 
     realist = ConversationalAgent(
         name="realist",
-        llm=llm,
         system_prompt=(
             "You are a pragmatic realist. You weigh both sides objectively and "
             "provide a balanced, evidence-based view. Keep it to 2-3 sentences."
         ),
+        config=config,
     )
 
-    supervisor = ConversationalAgent(
-        name="supervisor",
-        llm=llm,
-        system_prompt=(
-            "You are a senior decision-maker. Given input from multiple analysts, "
-            "synthesize their perspectives into a clear, actionable recommendation. "
-            "Be concise — one short paragraph."
-        ),
-    )
-
-    return optimist, pessimist, realist, supervisor
+    return optimist, pessimist, realist
 
 
-async def demo_supervisor(agents: tuple, topic: str) -> None:
+async def demo_supervisor(agents: AgentsTriple, topic: str, config: HarnessConfig) -> None:
     """Supervisor mode: delegates to all workers, then synthesizes."""
-    optimist, pessimist, realist, supervisor = agents
+    optimist, pessimist, realist = agents
 
     print("=" * 60)
     print("MODE 1: Supervisor")
@@ -66,7 +60,6 @@ async def demo_supervisor(agents: tuple, topic: str) -> None:
     team = AgentTeam(
         agents=[optimist, pessimist, realist],
         mode=TeamMode.SUPERVISOR,
-        supervisor=supervisor,
     )
 
     result = await team.run(topic)
@@ -74,9 +67,9 @@ async def demo_supervisor(agents: tuple, topic: str) -> None:
     print(f"Rounds: {result.rounds} | Contributors: {list(result.agent_results.keys())}")
 
 
-async def demo_debate(agents: tuple, topic: str) -> None:
+async def demo_debate(agents: AgentsTriple, topic: str, config: HarnessConfig) -> None:
     """Debate mode: agents argue independently, judge picks best."""
-    optimist, pessimist, realist, supervisor = agents
+    optimist, pessimist, realist = agents
 
     print("\n" + "=" * 60)
     print("MODE 2: Debate")
@@ -85,7 +78,6 @@ async def demo_debate(agents: tuple, topic: str) -> None:
     team = AgentTeam(
         agents=[optimist, pessimist, realist],
         mode=TeamMode.DEBATE,
-        supervisor=supervisor,
     )
 
     result = await team.run(topic)
@@ -93,9 +85,9 @@ async def demo_debate(agents: tuple, topic: str) -> None:
     print(f"Rounds: {result.rounds} | Debaters: {list(result.agent_results.keys())}")
 
 
-async def demo_round_robin(agents: tuple, topic: str) -> None:
+async def demo_round_robin(agents: AgentsTriple, topic: str, config: HarnessConfig) -> None:
     """Round-robin mode: agents build on each other's work iteratively."""
-    optimist, pessimist, realist, _ = agents
+    optimist, pessimist, realist = agents
 
     print("\n" + "=" * 60)
     print("MODE 3: Round Robin")
@@ -113,21 +105,16 @@ async def demo_round_robin(agents: tuple, topic: str) -> None:
 
 
 async def main() -> None:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        print("Error: Set OPENAI_API_KEY environment variable to run this demo.")
-        return
-
-    llm = OpenAIProvider(LLMConfig(provider="openai", model="gpt-4o"))
-    agents = create_agents(llm)
+    config = HarnessConfig.load(PROJECT_ROOT / "config.yaml")
+    agents = create_agents(config)
 
     topic = "Should a mid-size company invest heavily in AI automation this year?"
 
     print(f"Topic: {topic}\n")
 
-    await demo_supervisor(agents, topic)
-    await demo_debate(agents, topic)
-    await demo_round_robin(agents, topic)
+    await demo_supervisor(agents, topic, config)
+    await demo_debate(agents, topic, config)
+    await demo_round_robin(agents, topic, config)
 
 
 if __name__ == "__main__":

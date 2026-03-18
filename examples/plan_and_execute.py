@@ -1,43 +1,16 @@
-"""PlanAgent for complex task decomposition and multi-step execution.
+"""PlanAndExecuteAgent for complex task decomposition and multi-step execution.
 
-Demonstrates: PlanAgent's three-phase workflow — planning a JSON plan,
-executing each step with tool access, and synthesizing a final answer.
+Demonstrates: The Plan-Execute-Replan loop architecture.
 """
 
 import asyncio
-import os
+from pathlib import Path
 
-from agent_harness import PlanAgent, tool, HarnessConfig
-from agent_harness.llm import OpenAIProvider
-from agent_harness.core import LLMConfig
+from agent_harness import PlanAndExecuteAgent, HarnessConfig, tool
+from agent_harness.tool.builtin import web_search as builtin_web_search
 
 
-@tool
-async def search_topic(query: str) -> str:
-    """Search for information on a topic.
-
-    Args:
-        query: The search query string.
-    """
-    # Simulated search results
-    results = {
-        "renewable energy trends 2024": (
-            "Solar capacity grew 30% globally. Wind power investment reached $120B. "
-            "Battery storage costs dropped 15%. Green hydrogen projects doubled."
-        ),
-        "solar energy statistics": (
-            "Global solar capacity: 1.6 TW. Top producers: China, US, India. "
-            "Average cost: $0.05/kWh. Expected to triple by 2030."
-        ),
-        "wind energy statistics": (
-            "Global wind capacity: 900 GW. Offshore wind growing at 25%/year. "
-            "Top markets: China, Europe, US. Jobs: 1.4 million worldwide."
-        ),
-    }
-    for key, value in results.items():
-        if any(word in query.lower() for word in key.split()):
-            return value
-    return f"Search results for '{query}': General information available on this topic."
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 @tool
@@ -72,18 +45,13 @@ async def write_summary(topic: str, key_points: str) -> str:
 
 
 async def main() -> None:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        print("Error: Set OPENAI_API_KEY environment variable to run this demo.")
-        return
+    config = HarnessConfig.load(PROJECT_ROOT / "config.yaml")
 
-    llm = OpenAIProvider(LLMConfig(provider="openai", model="gpt-4o"))
-
-    agent = PlanAgent(
+    agent = PlanAndExecuteAgent(
         name="researcher",
-        llm=llm,
-        tools=[search_topic, analyze_data, write_summary],
-        allow_replan=True,
+        tools=[builtin_web_search, analyze_data, write_summary],
+        max_replans=3,
+        config=config,
     )
 
     query = (
@@ -95,8 +63,7 @@ async def main() -> None:
     result = await agent.run(query)
 
     print(f"Final Report:\n{result.output}\n")
-    print(f"Total steps: {result.step_count}")
-    print(f"Tokens used: {result.usage.total_tokens}")
+    print(f"Total usage: {result.usage}")
 
 
 if __name__ == "__main__":

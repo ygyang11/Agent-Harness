@@ -1,16 +1,17 @@
 """ReAct Agent with tool calling — the most fundamental agent pattern.
 
-Demonstrates: @tool decorator, OpenAIProvider, ReActAgent, running a query
-that requires multi-step tool use, and inspecting execution steps.
+Demonstrates: @tool decorator, ReActAgent, running a query that requires
+multi-step tool use, and inspecting execution steps.
 """
 
 import asyncio
-import os
 import random
+from pathlib import Path
 
 from agent_harness import ReActAgent, tool, HarnessConfig
-from agent_harness.llm import OpenAIProvider
-from agent_harness.core import LLMConfig
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 @tool
@@ -58,17 +59,12 @@ async def get_population(country: str) -> str:
 
 
 async def main() -> None:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        print("Error: Set OPENAI_API_KEY environment variable to run this demo.")
-        return
-
-    llm = OpenAIProvider(LLMConfig(provider="openai", model="gpt-4o"))
+    config = HarnessConfig.load(PROJECT_ROOT / "config.yaml")
 
     agent = ReActAgent(
         name="assistant",
-        llm=llm,
         tools=[calculate, get_weather, get_population],
+        config=config,
     )
 
     query = (
@@ -92,7 +88,7 @@ async def main() -> None:
             for obs in step.observation:
                 print(f"  Result: {obs.content}")
         if step.response:
-            print(f"  Response: {step.response[:100]}...")
+            print(f"  Response: {step.response}...")
 
 
 if __name__ == "__main__":

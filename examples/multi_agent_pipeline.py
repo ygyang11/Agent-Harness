@@ -6,11 +6,9 @@ Demonstrates two orchestration patterns in one file:
 """
 
 import asyncio
-import os
+from pathlib import Path
 
 from agent_harness import ConversationalAgent, HarnessConfig
-from agent_harness.llm import OpenAIProvider
-from agent_harness.core import LLMConfig
 from agent_harness.orchestration import (
     Pipeline,
     PipelineStep,
@@ -19,7 +17,10 @@ from agent_harness.orchestration import (
 )
 
 
-async def run_pipeline(llm: OpenAIProvider) -> None:
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+async def run_pipeline(config: HarnessConfig) -> None:
     """Part 1: Sequential pipeline — researcher feeds into writer."""
     print("=" * 60)
     print("PART 1: Pipeline (Sequential)")
@@ -27,20 +28,20 @@ async def run_pipeline(llm: OpenAIProvider) -> None:
 
     researcher = ConversationalAgent(
         name="researcher",
-        llm=llm,
         system_prompt=(
             "You are a research assistant. Given a topic, provide 3-4 key facts "
             "and recent developments. Be concise and factual."
         ),
+        config=config,
     )
 
     writer = ConversationalAgent(
         name="writer",
-        llm=llm,
         system_prompt=(
             "You are a skilled writer. Given research notes, craft a polished "
             "two-paragraph summary suitable for a newsletter. Keep it engaging."
         ),
+        config=config,
     )
 
     pipeline = Pipeline(
@@ -54,7 +55,7 @@ async def run_pipeline(llm: OpenAIProvider) -> None:
                     f"{research}"
                 ),
             ),
-        ]
+        ],
     )
 
     result = await pipeline.run("The impact of large language models on software engineering")
@@ -65,7 +66,7 @@ async def run_pipeline(llm: OpenAIProvider) -> None:
         print(f"Skipped: {result.skipped_steps}")
 
 
-async def run_dag(llm: OpenAIProvider) -> None:
+async def run_dag(config: HarnessConfig) -> None:
     """Part 2: DAG orchestration — parallel branches with merge."""
     print("\n" + "=" * 60)
     print("PART 2: DAG (Parallel Orchestration)")
@@ -73,38 +74,38 @@ async def run_dag(llm: OpenAIProvider) -> None:
 
     technical = ConversationalAgent(
         name="technical_analyst",
-        llm=llm,
         system_prompt=(
             "You are a technical analyst. Provide a brief technical assessment "
             "of the given topic. Focus on capabilities and limitations. 2-3 sentences."
         ),
+        config=config,
     )
 
     market = ConversationalAgent(
         name="market_analyst",
-        llm=llm,
         system_prompt=(
             "You are a market analyst. Provide a brief market/business assessment "
             "of the given topic. Focus on adoption and economics. 2-3 sentences."
         ),
+        config=config,
     )
 
     social = ConversationalAgent(
         name="social_analyst",
-        llm=llm,
         system_prompt=(
             "You are a social impact analyst. Assess the societal implications "
             "of the given topic. Focus on jobs and education. 2-3 sentences."
         ),
+        config=config,
     )
 
     synthesizer = ConversationalAgent(
         name="synthesizer",
-        llm=llm,
         system_prompt=(
             "You synthesize multiple analyst perspectives into a cohesive "
             "executive summary. Be concise — one paragraph max."
         ),
+        config=config,
     )
 
     def merge_analyses(results: dict) -> str:
@@ -125,7 +126,8 @@ async def run_dag(llm: OpenAIProvider) -> None:
                 dependencies=["technical", "market", "social"],
                 input_transform=merge_analyses,
             ),
-        ]
+        ],
+        config=config,
     )
 
     result = await dag.run("Autonomous vehicles in urban transportation")
@@ -139,15 +141,10 @@ async def run_dag(llm: OpenAIProvider) -> None:
 
 
 async def main() -> None:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        print("Error: Set OPENAI_API_KEY environment variable to run this demo.")
-        return
+    config = HarnessConfig.load(PROJECT_ROOT / "config.yaml")
 
-    llm = OpenAIProvider(LLMConfig(provider="openai", model="gpt-4o"))
-
-    await run_pipeline(llm)
-    await run_dag(llm)
+    await run_pipeline(config)
+    await run_dag(config)
 
 
 if __name__ == "__main__":
