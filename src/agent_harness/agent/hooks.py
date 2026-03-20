@@ -22,6 +22,9 @@ _active_orchestration_parent: contextvars.ContextVar[Span | None] = contextvars.
 _active_step_span: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
     "_active_step_span", default=None
 )
+_active_run_span: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
+    "_active_run_span", default=None
+)
 
 
 _TRACE_TEXT_MAX_TOKENS = 64
@@ -221,6 +224,7 @@ class TracingHooks(DefaultHooks):
             input=truncated_input,
         )
         self._run_span_stack.append(run_span)
+        _active_run_span.set(run_span)
         self._root_span = run_span
         self._console.print_start(
             kind=run_span.kind,
@@ -275,22 +279,28 @@ class TracingHooks(DefaultHooks):
         if step_span:
             self._finish_span(step_span)
             _active_step_span.set(None)
-        run_span = self._run_span_stack.pop() if self._run_span_stack else None
+        run_span = _active_run_span.get(None)
+        _active_run_span.set(None)
         if run_span:
             run_span.set_error(error)
             self._finish_span(run_span)
+            if run_span in self._run_span_stack:
+                self._run_span_stack.remove(run_span)
         self._root_span = self._run_span_stack[-1] if self._run_span_stack else None
         self._end_execution()
 
     async def on_run_end(self, agent_name: str, output: str) -> None:
-        run_span = self._run_span_stack.pop() if self._run_span_stack else None
+        run_span = _active_run_span.get(None)
+        _active_run_span.set(None)
         if run_span:
             run_span.attributes["output"] = truncate_text_by_tokens(
                 output,
                 max_tokens=_TRACE_TEXT_MAX_TOKENS,
                 suffix="",
             )
-            self._finish_until(run_span)
+            self._finish_span(run_span)
+            if run_span in self._run_span_stack:
+                self._run_span_stack.remove(run_span)
         self._root_span = self._run_span_stack[-1] if self._run_span_stack else None
         self._end_execution()
 

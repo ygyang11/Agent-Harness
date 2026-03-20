@@ -456,3 +456,28 @@ class TestParallelStepSpans:
         agent_spans = [s for s in hooks._all_spans if s.kind == "agent"]
         assert len(step_spans) == 2
         assert len(agent_spans) == 2
+
+    @pytest.mark.asyncio
+    async def test_parallel_workers_all_run_spans_collected(self) -> None:
+        """All parallel worker agent spans should appear in _all_spans."""
+        import asyncio
+
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        await hooks.on_team_start("team", "supervisor")
+
+        async def run_worker(name: str) -> None:
+            await hooks.on_run_start(name, f"task {name}")
+            await hooks.on_step_start(name, 1)
+            await asyncio.sleep(0.01)
+            await hooks.on_step_end(name, 1)
+            await hooks.on_run_end(name, f"done {name}")
+
+        await asyncio.gather(
+            run_worker("a"), run_worker("b"), run_worker("c"),
+        )
+        await hooks.on_team_end("team", "supervisor")
+
+        agent_spans = [s for s in hooks._all_spans if s.kind == "agent"]
+        agent_names = {s.name for s in agent_spans}
+        assert len(agent_spans) == 3
+        assert agent_names == {"agent.a", "agent.b", "agent.c"}
