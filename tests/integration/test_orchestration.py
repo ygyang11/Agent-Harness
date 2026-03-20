@@ -187,6 +187,34 @@ async def test_router_llm_first_falls_back_to_rules_when_empty(config):
     assert len(router_llm.call_history) == 1
 
 
+def test_router_llm_first_without_llm_raises(config):
+    """llm_first=True requires llm to be provided."""
+    agent = _make_agent("a", "ok", config)
+    with pytest.raises(ValueError, match="llm is required"):
+        AgentRouter(
+            routes=[Route(agent=agent, name="a", condition=r"a")],
+            llm_first=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_router_last_routed_to_tracks_decision(config):
+    """last_routed_to should reflect which agent handled the request."""
+    math_agent = _make_agent("math", "42", config)
+    fallback_agent = _make_agent("fallback", "general", config)
+
+    router = AgentRouter(
+        routes=[Route(agent=math_agent, name="math", condition=r"calc|math")],
+        fallback=fallback_agent,
+    )
+
+    await router.run("calc 1+1")
+    assert router.last_routed_to == ["math"]
+
+    await router.run("something else")
+    assert router.last_routed_to == ["fallback"]
+
+
 @pytest.mark.asyncio
 async def test_pipeline_invokes_start_end_hooks(config):
     agent = _make_agent("worker", "pipeline output", config)

@@ -15,9 +15,25 @@ from agent_harness.utils.token_counter import truncate_text_by_tokens
 class WebFetchConfig:
     """Configuration for the web_fetch tool."""
 
-    max_response_tokens: int = 15_000
+    max_response_tokens: int = 5_000
     default_timeout: int = 30
     allowed_schemes: frozenset[str] = frozenset({"http", "https"})
+    user_agent: str = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+    )
+    # Content-Type prefixes that indicate binary (non-readable) content
+    binary_content_types: frozenset[str] = frozenset({
+        "application/pdf",
+        "application/zip",
+        "application/octet-stream",
+        "application/gzip",
+        "application/x-tar",
+        "image/",
+        "audio/",
+        "video/",
+        "font/",
+    })
 
 
 _CFG = WebFetchConfig()
@@ -76,6 +92,11 @@ def _extract_text_from_html(html: str) -> str:
     return extractor.get_text()
 
 
+def _is_binary_content_type(content_type: str) -> bool:
+    ct = content_type.lower().split(";")[0].strip()
+    return any(ct.startswith(prefix) for prefix in _CFG.binary_content_types)
+
+
 def _format_response(body: str, content_type: str) -> str:
     ct = content_type.lower()
     if "application/json" in ct:
@@ -123,12 +144,23 @@ async def web_fetch(url: str, timeout: int = 30) -> str:
 
     try:
         timeout_cfg = aiohttp.ClientTimeout(total=timeout)
-        async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
+        headers = {"User-Agent": _CFG.user_agent}
+        async with aiohttp.ClientSession(timeout=timeout_cfg, headers=headers) as session:
             async with session.get(url) as resp:
                 if resp.status >= 400:
                     return f"Error: HTTP {resp.status} for {url}"
-                body = await resp.text()
+
                 content_type = resp.headers.get("Content-Type", "")
+
+                if _is_binary_content_type(content_type):
+                    ct_short = content_type.split(";")[0].strip()
+                    return f"Error: unsupported content type: {ct_short} (binary content cannot be read)"
+
+                try:
+                    body = await resp.text()
+                except UnicodeDecodeError:
+                    return "Error: failed to decode response (binary or non-UTF-8 content)"
+
                 formatted = _format_response(body, content_type)
                 return truncate_text_by_tokens(
                     formatted,

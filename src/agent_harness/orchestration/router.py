@@ -106,14 +106,18 @@ class AgentRouter:
         hooks: DefaultHooks | None = None,
         config: HarnessConfig | None = None,
     ) -> None:
+        if llm_first and llm is None:
+            raise ValueError("llm is required when llm_first=True")
         self.routes = routes
         self.fallback = fallback
         self.llm = llm
         self.llm_first = llm_first
         self.hooks = resolve_hooks(hooks, config)
+        self.last_routed_to: list[str] = []
 
     async def run(self, input: str) -> AgentResult:
         """Route the input to the matching agent."""
+        self.last_routed_to = []
         if self.llm_first and self.llm:
             # LLM routing first
             routes = await self._llm_select_routes(input)
@@ -124,12 +128,14 @@ class AgentRouter:
             for route in self.routes:
                 if self._matches(route, input):
                     logger.info("Router: matched route '%s' (rule fallback)", route.name)
+                    self.last_routed_to = [route.name]
                     return await self._run_agent(route.agent, input)
         else:
             # Rule matching first
             for route in self.routes:
                 if self._matches(route, input):
                     logger.info("Router: matched route '%s'", route.name)
+                    self.last_routed_to = [route.name]
                     return await self._run_agent(route.agent, input)
 
             # LLM routing fallback
@@ -140,6 +146,7 @@ class AgentRouter:
 
         if self.fallback:
             logger.info("Router: no match, using fallback")
+            self.last_routed_to = [getattr(self.fallback, "name", "fallback")]
             return await self._run_agent(self.fallback, input)
 
         from agent_harness.core.errors import OrchestrationError
@@ -191,6 +198,7 @@ class AgentRouter:
 
     async def _execute_routes(self, input: str, routes: list[Route]) -> AgentResult:
         """Execute the selected agents and synthesize results."""
+        self.last_routed_to = [r.name for r in routes]
         if len(routes) == 1:
             logger.info("Router: LLM selected route '%s'", routes[0].name)
             return await self._run_agent(routes[0].agent, input)

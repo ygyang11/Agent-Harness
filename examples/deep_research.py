@@ -125,7 +125,6 @@ async def main() -> None:
         builtin_web_fetch,
         builtin_take_notes,
         builtin_list_notes,
-        builtin_read_notes,
     ]
     query = "What is the current state of quantum computing and its potential impact?"
 
@@ -149,12 +148,13 @@ async def main() -> None:
     print("Phase 3: Cross review...")
     review_team = build_review_team(config)
     review_result = await review_team.run(
-        f"Question:\n{query}\n\nPlan:\n{plan_result.output}\n\nResearch:\n{research_bundle}"
+        f"Evaluate the research findings:\nQuestion:\n{query}\n\nPlan:\n{plan_result.output}\n\nResearch:\n{research_bundle}"
     )
 
     print("Phase 4: Final synthesis...")
-    writer = ConversationalAgent(
+    writer = ReActAgent(
         name="final_writer",
+        tools=[builtin_list_notes, builtin_read_notes],
         system_prompt=DEEP_RESEARCH_PROMPTS["writer.system"],
         config=config,
     )

@@ -1,19 +1,23 @@
-"""Pipeline sequential chaining + DAG parallel orchestration.
+"""Pipeline, DAG, and Router orchestration patterns.
 
-Demonstrates two orchestration patterns in one file:
+Demonstrates three orchestration patterns in one file:
   Part 1 — Pipeline: sequential agent chain with input transforms.
   Part 2 — DAG: parallel execution with dependency resolution.
+  Part 3 — Router: intent-based dispatch to specialist agents.
 """
 
 import asyncio
 from pathlib import Path
 
 from agent_harness import ConversationalAgent, HarnessConfig
+from agent_harness.llm import create_llm
 from agent_harness.orchestration import (
     Pipeline,
     PipelineStep,
     DAGOrchestrator,
     DAGNode,
+    AgentRouter,
+    Route,
 )
 
 
@@ -140,11 +144,76 @@ async def run_dag(config: HarnessConfig) -> None:
     print(f"\n--- Final Synthesis ---\n{result.outputs['synthesis'].output}")
 
 
+async def run_router(config: HarnessConfig) -> None:
+    """Part 3: Router — intent-based dispatch to specialist agents."""
+    print("\n" + "=" * 60)
+    print("PART 3: Router (Intent-Based Dispatch)")
+    print("=" * 60)
+
+    coder = ConversationalAgent(
+        name="coder",
+        system_prompt=(
+            "You are a senior software engineer. Answer coding and technical "
+            "architecture questions concisely. Provide code snippets when helpful."
+        ),
+        config=config,
+    )
+
+    strategist = ConversationalAgent(
+        name="strategist",
+        system_prompt=(
+            "You are a business strategist. Answer questions about market strategy, "
+            "competitive positioning, and business models. Be direct and actionable."
+        ),
+        config=config,
+    )
+
+    generalist = ConversationalAgent(
+        name="generalist",
+        system_prompt="You are a helpful general-purpose assistant. Answer clearly and concisely.",
+        config=config,
+    )
+
+    router = AgentRouter(
+        routes=[
+            Route(
+                agent=coder,
+                name="coder",
+                condition=r"code|program|function|bug|API|debug|implement",
+                description="Handles coding, debugging, and software architecture questions.",
+            ),
+            Route(
+                agent=strategist,
+                name="strategist",
+                condition=r"market|business|strategy|competitive|revenue|pricing",
+                description="Handles business strategy, market analysis, and positioning questions.",
+            ),
+        ],
+        fallback=generalist,
+        llm=create_llm(config),
+        llm_first=False,
+    )
+
+    queries = [
+        "How do I implement a retry decorator in Python?",
+        "What's a good pricing strategy for a B2B SaaS startup?",
+        "What are the best practices for remote team management?",
+    ]
+
+    for query in queries:
+        print(f"\nQuery: {query}")
+        result = await router.run(query)
+        routed = ", ".join(router.last_routed_to)
+        print(f"  Routed to: [{routed}]")
+        print(f"  Response: {result.output[:300]}...")
+
+
 async def main() -> None:
     config = HarnessConfig.load(PROJECT_ROOT / "config.yaml")
 
-    await run_pipeline(config)
-    await run_dag(config)
+    # await run_pipeline(config)
+    # await run_dag(config)
+    await run_router(config)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class WebSearchConfig:
     """Configuration for the web_search tool."""
 
-    max_snippet_tokens: int = 1_000
+    max_snippet_tokens: int = 500
 
 
 _CFG = WebSearchConfig()

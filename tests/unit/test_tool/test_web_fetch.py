@@ -6,6 +6,7 @@ import pytest
 from agent_harness.tool.builtin.web_fetch import (
     _extract_text_from_html,
     _format_response,
+    _is_binary_content_type,
     web_fetch,
 )
 
@@ -104,3 +105,35 @@ class TestFormatResponse:
 
     def test_empty_content_type_is_passthrough(self) -> None:
         assert _format_response("some data", "") == "some data"
+
+
+class TestBinaryContentTypeDetection:
+    def test_pdf_is_binary(self) -> None:
+        assert _is_binary_content_type("application/pdf") is True
+
+    def test_pdf_with_charset_is_binary(self) -> None:
+        assert _is_binary_content_type("application/pdf; charset=utf-8") is True
+
+    def test_zip_is_binary(self) -> None:
+        assert _is_binary_content_type("application/zip") is True
+
+    def test_octet_stream_is_binary(self) -> None:
+        assert _is_binary_content_type("application/octet-stream") is True
+
+    def test_image_png_is_binary(self) -> None:
+        assert _is_binary_content_type("image/png") is True
+
+    def test_video_mp4_is_binary(self) -> None:
+        assert _is_binary_content_type("video/mp4") is True
+
+    def test_html_is_not_binary(self) -> None:
+        assert _is_binary_content_type("text/html; charset=utf-8") is False
+
+    def test_json_is_not_binary(self) -> None:
+        assert _is_binary_content_type("application/json") is False
+
+    def test_plain_text_is_not_binary(self) -> None:
+        assert _is_binary_content_type("text/plain") is False
+
+    def test_empty_is_not_binary(self) -> None:
+        assert _is_binary_content_type("") is False
