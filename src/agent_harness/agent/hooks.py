@@ -1,6 +1,7 @@
 """Agent lifecycle hooks for extensible behavior."""
 from __future__ import annotations
 
+import contextvars
 import sys
 import uuid
 from datetime import datetime
@@ -14,6 +15,10 @@ from agent_harness.utils.token_counter import truncate_text_by_tokens
 
 if TYPE_CHECKING:
     from agent_harness.core.message import Message, ToolCall, ToolResult
+
+_active_orchestration_parent: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
+    "_active_orchestration_parent", default=None
+)
 
 
 _TRACE_TEXT_MAX_TOKENS = 64
@@ -116,14 +121,27 @@ class TracingHooks(DefaultHooks):
         self._team_span_stack: list[Span] = []
         self._dag_node_span_stack: list[Span] = []
         self._all_spans: list[Span] = []
+        self._span_depth_map: dict[str, int] = {}
         self._depth = 0
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _new_span(self, name: str, kind: str = "internal", **attrs: Any) -> Span:
-        parent_id = self._span_stack[-1].span_id if self._span_stack else None
+    def _new_span(
+        self,
+        name: str,
+        kind: str = "internal",
+        *,
+        parent_span: Span | None = None,
+        **attrs: Any,
+    ) -> Span:
+        parent_id: str | None
+        if parent_span is not None:
+            parent_id = parent_span.span_id
+        else:
+            parent_id = self._span_stack[-1].span_id if self._span_stack else None
+
         span = Span(
             trace_id=self._trace_id,
             parent_span_id=parent_id,
@@ -131,16 +149,21 @@ class TracingHooks(DefaultHooks):
             kind=kind,
             attributes=attrs,
         )
+
+        if parent_id and parent_id in self._span_depth_map:
+            self._span_depth_map[span.span_id] = self._span_depth_map[parent_id] + 1
+        else:
+            self._span_depth_map[span.span_id] = 0
+
         self._span_stack.append(span)
         return span
 
     def _finish_span(self, span: Span) -> None:
-        indent = self._span_stack.index(span) if span in self._span_stack else 0
+        indent = self._span_depth_map.get(span.span_id, 0)
         span.finish()
         self._all_spans.append(span)
-        if self._span_stack and self._span_stack[-1] is span:
-            self._span_stack.pop()
-        # Real-time console output
+        if span in self._span_stack:
+            self._span_stack.remove(span)
         self._console.export_one(span, indent=indent)
 
     def _export_all(self) -> None:
@@ -154,11 +177,7 @@ class TracingHooks(DefaultHooks):
     def _finish_until(self, target: Span) -> None:
         if target not in self._span_stack:
             return
-        while self._span_stack:
-            span = self._span_stack[-1]
-            self._finish_span(span)
-            if span is target:
-                break
+        self._finish_span(target)
 
     def _begin_execution(self) -> None:
         self._depth += 1
@@ -173,6 +192,7 @@ class TracingHooks(DefaultHooks):
             self._team_span_stack = []
             self._dag_node_span_stack = []
             self._all_spans = []
+            self._span_depth_map = {}
 
     def _end_execution(self) -> None:
         if self._depth == 0:
@@ -192,9 +212,11 @@ class TracingHooks(DefaultHooks):
             max_tokens=_TRACE_TEXT_MAX_TOKENS,
             suffix="",
         )
+        orchestration_parent = _active_orchestration_parent.get(None)
         run_span = self._new_span(
             f"agent.{agent_name}",
             kind="agent",
+            parent_span=orchestration_parent,
             input=truncated_input,
         )
         self._run_span_stack.append(run_span)
@@ -202,7 +224,7 @@ class TracingHooks(DefaultHooks):
         self._console.print_start(
             kind=run_span.kind,
             name=run_span.name,
-            indent=max(len(self._span_stack) - 1, 0),
+            indent=self._span_depth_map.get(run_span.span_id, 0),
             attributes={"input": truncated_input},
         )
 
@@ -246,12 +268,14 @@ class TracingHooks(DefaultHooks):
             )
 
     async def on_error(self, agent_name: str, error: Exception) -> None:
+        if self._current_step_span:
+            self._finish_span(self._current_step_span)
+            self._current_step_span = None
         run_span = self._run_span_stack.pop() if self._run_span_stack else None
         if run_span:
             run_span.set_error(error)
-            self._finish_until(run_span)
+            self._finish_span(run_span)
         self._root_span = self._run_span_stack[-1] if self._run_span_stack else None
-        self._current_step_span = None
         self._end_execution()
 
     async def on_run_end(self, agent_name: str, output: str) -> None:
@@ -273,13 +297,13 @@ class TracingHooks(DefaultHooks):
 
     async def on_pipeline_start(self, pipeline_name: str) -> None:
         self._begin_execution()
-        span = self._new_span(f"pipeline.{pipeline_name}", kind="internal")
+        span = self._new_span(f"pipeline.{pipeline_name}", kind="orchestration")
         span.attributes["orchestration"] = "pipeline"
         self._pipeline_span_stack.append(span)
         self._console.print_start(
             kind=span.kind,
             name=span.name,
-            indent=max(len(self._span_stack) - 1, 0),
+            indent=self._span_depth_map.get(span.span_id, 0),
             attributes={"orchestration": "pipeline"},
         )
 
@@ -291,13 +315,13 @@ class TracingHooks(DefaultHooks):
 
     async def on_dag_start(self, dag_name: str) -> None:
         self._begin_execution()
-        span = self._new_span(f"dag.{dag_name}", kind="internal")
+        span = self._new_span(f"dag.{dag_name}", kind="orchestration")
         span.attributes["orchestration"] = "dag"
         self._dag_span_stack.append(span)
         self._console.print_start(
             kind=span.kind,
             name=span.name,
-            indent=max(len(self._span_stack) - 1, 0),
+            indent=self._span_depth_map.get(span.span_id, 0),
             attributes={"orchestration": "dag"},
         )
 
@@ -308,30 +332,38 @@ class TracingHooks(DefaultHooks):
         self._end_execution()
 
     async def on_dag_node_start(self, node_id: str) -> None:
-        span = self._new_span(f"dag_node.{node_id}", kind="internal")
+        dag_span = self._dag_span_stack[-1] if self._dag_span_stack else None
+        span = self._new_span(
+            f"dag_node.{node_id}",
+            kind="orchestration",
+            parent_span=dag_span,
+            node=node_id,
+        )
         self._dag_node_span_stack.append(span)
+        _active_orchestration_parent.set(span)
         self._console.print_start(
             kind=span.kind,
             name=span.name,
-            indent=max(len(self._span_stack) - 1, 0),
+            indent=self._span_depth_map.get(span.span_id, 0),
             attributes={"node": node_id},
         )
 
     async def on_dag_node_end(self, node_id: str) -> None:
+        _active_orchestration_parent.set(None)
         span = self._dag_node_span_stack.pop() if self._dag_node_span_stack else None
         if span:
-            self._finish_until(span)
+            self._finish_span(span)
 
     async def on_team_start(self, team_name: str, mode: str) -> None:
         self._begin_execution()
-        span = self._new_span(f"team.{team_name}", kind="internal")
+        span = self._new_span(f"team.{team_name}", kind="orchestration")
         span.attributes["orchestration"] = "team"
         span.attributes["mode"] = mode
         self._team_span_stack.append(span)
         self._console.print_start(
             kind=span.kind,
             name=span.name,
-            indent=max(len(self._span_stack) - 1, 0),
+            indent=self._span_depth_map.get(span.span_id, 0),
             attributes={
                 "orchestration": "team",
                 "mode": mode,

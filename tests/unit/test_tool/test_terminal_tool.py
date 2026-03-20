@@ -22,7 +22,7 @@ class TestTerminalTool:
     @pytest.mark.asyncio
     async def test_pwd_and_ls_chain_succeeds(self) -> None:
         result = await terminal_tool.execute(command="pwd && ls", timeout=5)
-        assert "agent_harness" in result
+        assert "src" in result
 
     @pytest.mark.asyncio
     async def test_chain_with_disallowed_subcommand_is_blocked(self) -> None:

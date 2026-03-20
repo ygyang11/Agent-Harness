@@ -16,12 +16,13 @@ _CONSOLE_ATTR_MAX_TOKENS = 100
 
 # ANSI color codes
 _COLORS = {
-    "agent": "\033[1;34m",   # Bold Blue
-    "llm": "\033[1;32m",     # Bold Green
-    "tool": "\033[1;33m",    # Bold Yellow
-    "memory": "\033[1;35m",  # Bold Magenta
-    "internal": "\033[0;37m", # Gray
-    "error": "\033[1;31m",   # Bold Red
+    "agent": "\033[1;34m",         # Bold Blue
+    "llm": "\033[1;32m",           # Bold Green
+    "tool": "\033[1;33m",          # Bold Yellow
+    "memory": "\033[1;35m",        # Bold Magenta
+    "orchestration": "\033[1;36m", # Bold Cyan
+    "internal": "\033[0;37m",      # Gray
+    "error": "\033[1;31m",         # Bold Red
     "reset": "\033[0m",
 }
 

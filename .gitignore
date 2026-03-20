@@ -15,6 +15,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 coverage.*
+pyrightconfig.*
 htmlcov/
 
 # ===== Virtual Environments & Dependencies =====

@@ -1,7 +1,9 @@
-"""Web search tool with Tavily and SerpAPI backends."""
+"""Web search tool for discovering information via search engines."""
 from __future__ import annotations
 
+import asyncio
 import logging
+from dataclasses import dataclass
 
 from agent_harness.core.config import resolve_search_config
 from agent_harness.tool.decorator import tool
@@ -9,7 +11,32 @@ from agent_harness.utils.token_counter import truncate_text_by_tokens
 
 logger = logging.getLogger(__name__)
 
-_MAX_SNIPPET_TOKENS = 15000
+
+@dataclass(frozen=True)
+class WebSearchConfig:
+    """Configuration for the web_search tool."""
+
+    max_snippet_tokens: int = 1_000
+
+
+_CFG = WebSearchConfig()
+
+
+def _format_result(index: int, title: str, snippet: str, url: str) -> str:
+    return f"{index}. {title}\n   [snippet] {snippet}\n   URL: {url}"
+
+
+def _format_search_results(results: list[tuple[str, str, str]]) -> str:
+    lines = [
+        _format_result(i, title, snippet, url)
+        for i, (title, snippet, url) in enumerate(results, 1)
+    ]
+    lines.append(
+        "\n---\n"
+        "Use `web_fetch` tool to read the full page content "
+        "if needed and the tool is available."
+    )
+    return "\n\n".join(lines)
 
 
 async def _search_tavily(query: str, max_results: int, api_key: str) -> str:
@@ -22,21 +49,21 @@ async def _search_tavily(query: str, max_results: int, api_key: str) -> str:
     client = AsyncTavilyClient(api_key=api_key)
     response = await client.search(query=query, max_results=max_results)
 
-    results = response.get("results", [])
-    if not results:
+    raw_results = response.get("results", [])
+    if not raw_results:
         return f"No results found for: {query}"
 
-    lines: list[str] = []
-    for i, r in enumerate(results, 1):
+    results: list[tuple[str, str, str]] = []
+    for r in raw_results:
         title = r.get("title", "No title")
         snippet = truncate_text_by_tokens(
             r.get("content", ""),
-            max_tokens=_MAX_SNIPPET_TOKENS,
+            max_tokens=_CFG.max_snippet_tokens,
             suffix="...",
         )
         url = r.get("url", "")
-        lines.append(f"{i}. {title}\n   {snippet}\n   URL: {url}")
-    return "\n\n".join(lines)
+        results.append((title, snippet, url))
+    return _format_search_results(results)
 
 
 async def _search_serpapi(query: str, max_results: int, api_key: str) -> str:
@@ -46,37 +73,40 @@ async def _search_serpapi(query: str, max_results: int, api_key: str) -> str:
     except ImportError:
         return "Error: google-search-results is not installed. Run `pip install google-search-results`."
 
-    import asyncio  # noqa: PLC0415
-
-    def _do_search() -> dict:
+    def _do_search() -> dict[str, list[dict[str, str]]]:
         search = GoogleSearch({"q": query, "num": max_results, "api_key": api_key})
-        return search.get_dict()
+        result: dict[str, list[dict[str, str]]] = search.get_dict()
+        return result
 
-    result = await asyncio.get_event_loop().run_in_executor(None, _do_search)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, _do_search)
     organic = result.get("organic_results", [])
     if not organic:
         return f"No results found for: {query}"
 
-    lines: list[str] = []
-    for i, r in enumerate(organic[:max_results], 1):
+    results: list[tuple[str, str, str]] = []
+    for r in organic[:max_results]:
         title = r.get("title", "No title")
         snippet = truncate_text_by_tokens(
             r.get("snippet", ""),
-            max_tokens=_MAX_SNIPPET_TOKENS,
+            max_tokens=_CFG.max_snippet_tokens,
             suffix="...",
         )
         url = r.get("link", "")
-        lines.append(f"{i}. {title}\n   {snippet}\n   URL: {url}")
-    return "\n\n".join(lines)
+        results.append((title, snippet, url))
+    return _format_search_results(results)
 
 
 @tool
 async def web_search(query: str, max_results: int = 5) -> str:
-    """Search the web for information using Tavily or SerpAPI.
+    """Search the web and return result snippets with URLs.
+
+    Returns ranked search result snippets (not full page content).
+    Use web_fetch to retrieve the full content of a specific result.
 
     Args:
         query: The search query string.
-        max_results: Maximum number of results to return.
+        max_results: Number of results to return (1-20, default 5).
     """
     cfg = resolve_search_config(None)
     provider = cfg.provider

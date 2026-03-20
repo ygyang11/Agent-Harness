@@ -37,7 +37,7 @@ def test_print_start_truncates_attribute_by_tokens() -> None:
 
     line = next(line for line in stream.getvalue().splitlines() if "input:" in line)
     value = line.split("input: ", 1)[1]
-    assert count_tokens(value) <= 40
+    assert count_tokens(value) <= 100
 
 
 def test_export_one_respects_explicit_indent() -> None:
@@ -70,3 +70,8 @@ def test_event_attributes_render_as_key_value_pairs() -> None:
     assert "• tool_call {" in output
     assert "tool=web_search" in output
     assert "args={'query': 'solar market size'}" in output
+
+
+def test_colors_include_orchestration() -> None:
+    from agent_harness.tracing.exporters.console import _COLORS
+    assert "orchestration" in _COLORS

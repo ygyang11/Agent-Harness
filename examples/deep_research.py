@@ -9,6 +9,7 @@ from agent_harness.orchestration import AgentTeam, DAGNode, DAGOrchestrator, Tea
 from agent_harness.tool.builtin import list_notes as builtin_list_notes
 from agent_harness.tool.builtin import read_notes as builtin_read_notes
 from agent_harness.tool.builtin import take_notes as builtin_take_notes
+from agent_harness.tool.builtin import web_fetch as builtin_web_fetch
 from agent_harness.tool.builtin import web_search as builtin_web_search
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -121,6 +122,7 @@ async def main() -> None:
     config = HarnessConfig.load(PROJECT_ROOT / "config.yaml")
     research_tools: list[BaseTool] = [
         builtin_web_search,
+        builtin_web_fetch,
         builtin_take_notes,
         builtin_list_notes,
         builtin_read_notes,

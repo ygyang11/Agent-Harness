@@ -332,3 +332,64 @@ class TestResolveHooks:
 
         assert isinstance(first, TracingHooks)
         assert first is second
+
+
+class TestOrchestrationSpanKind:
+    @pytest.mark.asyncio
+    async def test_orchestration_spans_use_orchestration_kind(self) -> None:
+        """Pipeline, DAG, DAG node, and team spans should have kind='orchestration'."""
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+
+        await hooks.on_pipeline_start("pipe")
+        assert hooks._span_stack[-1].kind == "orchestration"
+        await hooks.on_pipeline_end("pipe")
+
+        await hooks.on_dag_start("dag")
+        assert hooks._span_stack[-1].kind == "orchestration"
+        await hooks.on_dag_node_start("n1")
+        assert hooks._span_stack[-1].kind == "orchestration"
+        await hooks.on_dag_node_end("n1")
+        await hooks.on_dag_end("dag")
+
+        await hooks.on_team_start("team", "supervisor")
+        assert hooks._span_stack[-1].kind == "orchestration"
+        await hooks.on_team_end("team", "supervisor")
+
+
+class TestParallelDAGNodes:
+    @pytest.mark.asyncio
+    async def test_parallel_dag_nodes_are_siblings(self) -> None:
+        """Parallel DAG nodes should share the DAG span as parent and have equal depth."""
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        await hooks.on_dag_start("dag")
+        dag_span = hooks._dag_span_stack[-1]
+
+        await hooks.on_dag_node_start("a")
+        span_a = hooks._dag_node_span_stack[-1]
+        await hooks.on_dag_node_start("b")
+        span_b = hooks._dag_node_span_stack[-1]
+
+        assert span_a.parent_span_id == dag_span.span_id
+        assert span_b.parent_span_id == dag_span.span_id
+        assert hooks._span_depth_map[span_a.span_id] == hooks._span_depth_map[span_b.span_id]
+
+        await hooks.on_dag_node_end("b")
+        await hooks.on_dag_node_end("a")
+        await hooks.on_dag_end("dag")
+
+    @pytest.mark.asyncio
+    async def test_agent_inside_dag_node_uses_node_as_parent(self) -> None:
+        """An agent started inside a DAG node should use the node span as parent."""
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        await hooks.on_dag_start("dag")
+
+        await hooks.on_dag_node_start("n1")
+        node_span = hooks._dag_node_span_stack[-1]
+
+        await hooks.on_run_start("agent1", "hello")
+        agent_span = hooks._run_span_stack[-1]
+        assert agent_span.parent_span_id == node_span.span_id
+
+        await hooks.on_run_end("agent1", "done")
+        await hooks.on_dag_node_end("n1")
+        await hooks.on_dag_end("dag")

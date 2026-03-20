@@ -12,7 +12,7 @@ class TestBuiltinTools:
     def test_builtin_tools_include_all_core_tools(self) -> None:
         names = [t.name for t in BUILTIN_TOOLS]
         assert "terminal_tool" in names
-        assert "http_request" in names
+        assert "web_fetch" in names
         assert "take_notes" in names
         assert "list_notes" in names
         assert "read_notes" in names

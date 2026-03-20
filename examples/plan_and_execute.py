@@ -7,6 +7,7 @@ import asyncio
 from pathlib import Path
 
 from agent_harness import PlanAndExecuteAgent, HarnessConfig, tool
+from agent_harness.tool.builtin import web_fetch as builtin_web_fetch
 from agent_harness.tool.builtin import web_search as builtin_web_search
 
 
@@ -49,7 +50,7 @@ async def main() -> None:
 
     agent = PlanAndExecuteAgent(
         name="researcher",
-        tools=[builtin_web_search, analyze_data, write_summary],
+        tools=[builtin_web_search, builtin_web_fetch, analyze_data, write_summary],
         max_replans=3,
         config=config,
     )
