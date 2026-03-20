@@ -211,8 +211,8 @@ async def run_router(config: HarnessConfig) -> None:
 async def main() -> None:
     config = HarnessConfig.load(PROJECT_ROOT / "config.yaml")
 
-    # await run_pipeline(config)
-    # await run_dag(config)
+    await run_pipeline(config)
+    await run_dag(config)
     await run_router(config)
 
 
