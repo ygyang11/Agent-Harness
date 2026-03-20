@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 _active_orchestration_parent: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
     "_active_orchestration_parent", default=None
 )
+_active_step_span: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
+    "_active_step_span", default=None
+)
 
 
 _TRACE_TEXT_MAX_TOKENS = 64
@@ -113,7 +116,6 @@ class TracingHooks(DefaultHooks):
         # Span tracking
         self._trace_id: str = ""
         self._root_span: Span | None = None
-        self._current_step_span: Span | None = None
         self._span_stack: list[Span] = []
         self._run_span_stack: list[Span] = []
         self._pipeline_span_stack: list[Span] = []
@@ -184,7 +186,6 @@ class TracingHooks(DefaultHooks):
         if self._depth == 1:
             self._trace_id = uuid.uuid4().hex
             self._root_span = None
-            self._current_step_span = None
             self._span_stack = []
             self._run_span_stack = []
             self._pipeline_span_stack = []
@@ -229,14 +230,16 @@ class TracingHooks(DefaultHooks):
         )
 
     async def on_step_start(self, agent_name: str, step: int) -> None:
-        self._current_step_span = self._new_span(
+        step_span = self._new_span(
             f"step.{step}", kind="internal", agent=agent_name,
         )
+        _active_step_span.set(step_span)
 
     async def on_step_end(self, agent_name: str, step: int) -> None:
-        if self._current_step_span:
-            self._finish_until(self._current_step_span)
-            self._current_step_span = None
+        step_span = _active_step_span.get(None)
+        if step_span:
+            self._finish_span(step_span)
+            _active_step_span.set(None)
 
     async def on_llm_call(self, agent_name: str, messages: list[Any]) -> None:
         active = self._span_stack[-1] if self._span_stack else self._root_span
@@ -268,9 +271,10 @@ class TracingHooks(DefaultHooks):
             )
 
     async def on_error(self, agent_name: str, error: Exception) -> None:
-        if self._current_step_span:
-            self._finish_span(self._current_step_span)
-            self._current_step_span = None
+        step_span = _active_step_span.get(None)
+        if step_span:
+            self._finish_span(step_span)
+            _active_step_span.set(None)
         run_span = self._run_span_stack.pop() if self._run_span_stack else None
         if run_span:
             run_span.set_error(error)
@@ -288,7 +292,6 @@ class TracingHooks(DefaultHooks):
             )
             self._finish_until(run_span)
         self._root_span = self._run_span_stack[-1] if self._run_span_stack else None
-        self._current_step_span = None
         self._end_execution()
 
     # ------------------------------------------------------------------

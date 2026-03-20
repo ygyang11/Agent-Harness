@@ -29,16 +29,18 @@ class TestTracingHooksLifecycle:
 
     @pytest.mark.asyncio
     async def test_step_spans_are_children(self) -> None:
+        from agent_harness.agent.hooks import _active_step_span
+
         hooks = TracingHooks(trace_dir="/tmp/test_traces")
         await hooks.on_run_start("agent", "input")
 
         await hooks.on_step_start("agent", 1)
-        assert hooks._current_step_span is not None
-        step_span = hooks._current_step_span
+        step_span = _active_step_span.get(None)
+        assert step_span is not None
         assert step_span.parent_span_id == hooks._root_span.span_id
 
         await hooks.on_step_end("agent", 1)
-        assert hooks._current_step_span is None
+        assert _active_step_span.get(None) is None
         assert step_span in hooks._all_spans
 
         await hooks.on_run_end("agent", "done")
@@ -429,3 +431,28 @@ class TestParallelTeamWorkers:
 
         await hooks.on_run_end("agent1", "done")
         await hooks.on_pipeline_end("pipe")
+
+
+class TestParallelStepSpans:
+    @pytest.mark.asyncio
+    async def test_parallel_step_spans_tracked_independently(self) -> None:
+        """Concurrent step spans in separate tasks should not overwrite each other."""
+        import asyncio
+
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        await hooks.on_team_start("team", "supervisor")
+
+        async def run_worker(name: str) -> None:
+            await hooks.on_run_start(name, f"task {name}")
+            await hooks.on_step_start(name, 1)
+            await asyncio.sleep(0.01)
+            await hooks.on_step_end(name, 1)
+            await hooks.on_run_end(name, f"done {name}")
+
+        await asyncio.gather(run_worker("a"), run_worker("b"))
+        await hooks.on_team_end("team", "supervisor")
+
+        step_spans = [s for s in hooks._all_spans if s.name == "step.1"]
+        agent_spans = [s for s in hooks._all_spans if s.kind == "agent"]
+        assert len(step_spans) == 2
+        assert len(agent_spans) == 2
