@@ -28,8 +28,9 @@ class LLMConfig(BaseModel):
     timeout: float = 120.0
     max_retries: int = 3
     retry_delay: float = 1.0
+    reasoning_effort: str | None = None
 
-    @field_validator("api_key", "base_url", mode="before")
+    @field_validator("api_key", "base_url", "reasoning_effort", mode="before")
     @classmethod
     def _blank_to_none(cls, value: str | None) -> str | None:
         if isinstance(value, str) and value.strip() == "":

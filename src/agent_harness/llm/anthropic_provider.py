@@ -129,6 +129,10 @@ class AnthropicProvider(BaseLLM):
                 else:
                     request["tool_choice"] = {"type": "tool", "name": tool_choice}
 
+        if self.config.reasoning_effort:
+            request["thinking"] = {"type": "adaptive"}
+            request["output_config"] = {"effort": self.config.reasoning_effort}
+
         request.update(kwargs)
         return request
 

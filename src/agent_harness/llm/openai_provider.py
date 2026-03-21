@@ -151,6 +151,9 @@ class OpenAIProvider(BaseLLM):
                         "function": {"name": tool_choice},
                     }
 
+        if self.config.reasoning_effort:
+            request["reasoning_effort"] = self.config.reasoning_effort
+
         request.update(kwargs)
         return request
 
