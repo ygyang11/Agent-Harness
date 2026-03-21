@@ -13,6 +13,7 @@ class TestBuiltinTools:
         names = [t.name for t in BUILTIN_TOOLS]
         assert "terminal_tool" in names
         assert "web_fetch" in names
+        assert "pdf_parser" in names
         assert "take_notes" in names
         assert "list_notes" in names
         assert "read_notes" in names

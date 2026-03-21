@@ -240,6 +240,14 @@ def resolve_search_config(config: HarnessConfig | SearchConfig | None) -> Search
     return HarnessConfig.get().search
 
 
+def resolve_pdf_config(config: HarnessConfig | PdfConfig | None) -> PdfConfig:
+    if isinstance(config, HarnessConfig):
+        return config.pdf
+    if isinstance(config, PdfConfig):
+        return config
+    return HarnessConfig.get().pdf
+
+
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge override into base dict."""
     result = base.copy()

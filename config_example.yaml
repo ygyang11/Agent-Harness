@@ -39,6 +39,12 @@ search:
   tavily_api_key: ""            # Tavily API key (overrides TAVILY_API_KEY env var)
   serpapi_api_key: ""           # SerpAPI key (overrides SERPAPI_API_KEY env var)
 
+# --- PDF Parsing ---
+pdf:
+  provider: "mineru"            # "mineru" | "paddleocr"
+  mineru_api_key: ""            # MinerU API key (overrides MINERU_API_KEY env var)
+  paddleocr_api_key: ""         # PaddleOCR API key (overrides PADDLEOCR_API_KEY env var)
+
 # --- Tracing & Observability ---
 tracing:
   enabled: true                 # Enable tracing
