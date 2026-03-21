@@ -96,7 +96,20 @@ class OpenAIProvider(BaseLLM):
         tc_buffer: dict[int, dict[str, str]] = {}
 
         async for chunk in stream:
+            chunk_usage: Usage | None = None
+            if hasattr(chunk, "usage") and chunk.usage:
+                chunk_usage = Usage(
+                    prompt_tokens=chunk.usage.prompt_tokens or 0,
+                    completion_tokens=chunk.usage.completion_tokens or 0,
+                    total_tokens=chunk.usage.total_tokens or 0,
+                )
+
             if not chunk.choices:
+                if chunk_usage:
+                    yield StreamDelta(
+                        chunk=MessageChunk(),
+                        usage=chunk_usage,
+                    )
                 continue
             choice = chunk.choices[0]
             delta = choice.delta
@@ -155,6 +168,9 @@ class OpenAIProvider(BaseLLM):
             "max_tokens": self._resolve_max_tokens(max_tokens),
             "stream": stream,
         }
+
+        if stream:
+            request["stream_options"] = {"include_usage": True}
 
         if tools:
             request["tools"] = [t.to_openai_format() for t in tools]

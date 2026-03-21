@@ -11,8 +11,8 @@ from typing import Any, AsyncIterator, Callable, Coroutine, TypeVar
 from agent_harness.core.config import LLMConfig
 from agent_harness.core.errors import LLMError, LLMRateLimitError
 from agent_harness.core.event import EventEmitter
-from agent_harness.core.message import Message
-from agent_harness.llm.types import LLMResponse, StreamDelta, Usage
+from agent_harness.core.message import Message, ToolCall
+from agent_harness.llm.types import FinishReason, LLMResponse, StreamDelta, Usage
 from agent_harness.tool.base import ToolSchema
 
 logger = logging.getLogger(__name__)
@@ -182,6 +182,42 @@ class BaseLLM(ABC, EventEmitter):
         except Exception as e:
             await self.emit("llm.stream.error", model=self.model_name, error=str(e))
             raise
+
+    async def collect_stream(
+        self,
+        messages: list[Message],
+        tools: list[ToolSchema] | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """Stream a response and collect it into a single LLMResponse.
+
+        Useful when you want streaming side-effects (e.g. real-time display)
+        but still need a complete LLMResponse at the end.
+        """
+        content_parts: list[str] = []
+        tool_calls: list[ToolCall] | None = None
+        total_usage = Usage()
+        finish_reason = FinishReason.STOP
+
+        async for delta in self.stream(messages, tools=tools, **kwargs):
+            if delta.chunk.delta_content:
+                content_parts.append(delta.chunk.delta_content)
+            if delta.chunk.delta_tool_calls:
+                tool_calls = delta.chunk.delta_tool_calls
+            if delta.usage:
+                total_usage = total_usage + delta.usage
+            if delta.finish_reason:
+                finish_reason = delta.finish_reason
+
+        return LLMResponse(
+            message=Message.assistant(
+                "".join(content_parts) or None,
+                tool_calls=tool_calls,
+            ),
+            usage=total_usage,
+            finish_reason=finish_reason,
+            model=self.model_name,
+        )
 
     async def _with_retry(self, call: Callable[[], Coroutine[Any, Any, T]]) -> T:
         """Retry a coroutine on transient errors with exponential backoff."""

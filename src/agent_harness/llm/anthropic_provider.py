@@ -115,6 +115,20 @@ class AnthropicProvider(BaseLLM):
                             )
                             continue
 
+                    if event_type == "message_start":
+                        msg = getattr(event, "message", None)
+                        msg_usage = getattr(msg, "usage", None)
+                        if msg_usage:
+                            yield StreamDelta(
+                                chunk=MessageChunk(),
+                                usage=Usage(
+                                    prompt_tokens=getattr(msg_usage, "input_tokens", 0),
+                                    completion_tokens=0,
+                                    total_tokens=getattr(msg_usage, "input_tokens", 0),
+                                ),
+                            )
+                        continue
+
                     if event_type == "message_delta":
                         stop_reason = getattr(
                             getattr(event, "delta", None), "stop_reason", None
@@ -136,12 +150,22 @@ class AnthropicProvider(BaseLLM):
                         elif stop_reason == "max_tokens":
                             finish = FinishReason.LENGTH
 
+                        delta_usage: Usage | None = None
+                        evt_usage = getattr(event, "usage", None)
+                        if evt_usage:
+                            output_tokens = getattr(evt_usage, "output_tokens", 0)
+                            delta_usage = Usage(
+                                completion_tokens=output_tokens,
+                                total_tokens=output_tokens,
+                            )
+
                         yield StreamDelta(
                             chunk=MessageChunk(
                                 delta_tool_calls=delta_tool_calls,
                                 finish_reason=stop_reason,
                             ),
                             finish_reason=finish,
+                            usage=delta_usage,
                         )
 
         except anthropic.RateLimitError as e:
