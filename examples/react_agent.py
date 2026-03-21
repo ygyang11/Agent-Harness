@@ -1,11 +1,16 @@
 """ReAct Agent with tool calling — the most fundamental agent pattern.
 
-Demonstrates: @tool decorator, ReActAgent, running a query that requires
+Demonstrates: @tool decorator, ReActAgent, generate vs stream mode,
 multi-step tool use, and inspecting execution steps.
+
+Usage:
+    python examples/react_agent.py              # default (generate mode)
+    python examples/react_agent.py --stream     # streaming mode
 """
 
 import asyncio
 import random
+import sys
 from pathlib import Path
 
 from agent_harness import ReActAgent, tool, HarnessConfig
@@ -58,12 +63,16 @@ async def get_population(country: str) -> str:
     return populations.get(country.lower(), f"Population data not available for {country}")
 
 
-async def main() -> None:
+async def run_agent(use_stream: bool) -> None:
     config = HarnessConfig.load(PROJECT_ROOT / "config.yaml")
+    mode = "stream" if use_stream else "generate"
+
+    print(f"=== Mode: {mode} ===\n")
 
     agent = ReActAgent(
         name="assistant",
         tools=[calculate, get_weather, get_population],
+        stream=use_stream,
         config=config,
     )
 
@@ -75,7 +84,7 @@ async def main() -> None:
 
     result = await agent.run(query)
 
-    print(f"Answer:\n{result.output}\n")
+    print(f"\nAnswer:\n{result.output}\n")
     print(f"Steps taken: {result.step_count}")
     print(f"Tokens used: {result.usage.total_tokens}")
 
@@ -88,8 +97,9 @@ async def main() -> None:
             for obs in step.observation:
                 print(f"  Result: {obs.content}")
         if step.response:
-            print(f"  Response: {step.response}...")
+            print(f"  Response: {step.response[:200]}...")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    use_stream = "--stream" in sys.argv
+    asyncio.run(run_agent(use_stream))
