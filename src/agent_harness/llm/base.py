@@ -130,16 +130,31 @@ class BaseLLM(ABC, EventEmitter):
         self,
         messages: list[Message],
         tools: list[ToolSchema] | None = None,
+        stream: bool = False,
         **kwargs: Any,
     ) -> LLMResponse:
-        """Generate with automatic event emission and built-in retry."""
+        """Generate with automatic event emission and built-in retry.
+
+        Args:
+            messages: Conversation history.
+            tools: Available tools for function calling.
+            stream: If True, uses streaming internally but still returns
+                a complete LLMResponse. Useful for real-time token delivery
+                in future extensions while keeping the same return type.
+            **kwargs: Passed through to generate() or stream().
+        """
         await self.emit("llm.generate.start", model=self.model_name, message_count=len(messages))
         try:
             if self._rate_limiter:
                 await self._rate_limiter.acquire()
-            response = await self._with_retry(
-                lambda: self.generate(messages, tools=tools, **kwargs)
-            )
+
+            if stream:
+                response = await self.collect_stream(messages, tools=tools, **kwargs)
+            else:
+                response = await self._with_retry(
+                    lambda: self.generate(messages, tools=tools, **kwargs)
+                )
+
             await self.emit(
                 "llm.generate.end",
                 model=self.model_name,
