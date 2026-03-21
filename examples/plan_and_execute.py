@@ -52,7 +52,7 @@ async def main() -> None:
     agent = PlanAndExecuteAgent(
         name="researcher",
         tools=[builtin_web_search, builtin_web_fetch, builtin_pdf_parser, analyze_data, write_summary],
-        max_replans=3,
+        executor_max_steps=20,
         config=config,
     )
 
