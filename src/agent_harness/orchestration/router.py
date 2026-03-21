@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from agent_harness.agent.base import BaseAgent, AgentResult
 from agent_harness.agent.hooks import DefaultHooks, resolve_hooks
 from agent_harness.core.config import HarnessConfig
+from agent_harness.core.errors import OrchestrationError
 from agent_harness.core.message import Message
 from agent_harness.utils.json_utils import parse_json_lenient
 
@@ -156,7 +157,10 @@ class AgentRouter:
 
     async def _llm_select_routes(self, input: str) -> list[Route]:
         """Use LLM to select the best route(s). Returns matched Route objects."""
-        assert self.llm is not None
+        if self.llm is None:
+            raise OrchestrationError(
+                "LLM required for route selection but not configured"
+            )
 
         route_descriptions = "\n".join(
             f"- {r.name}: {r.description}" if r.description else f"- {r.name}"
@@ -225,7 +229,10 @@ class AgentRouter:
         if len(outputs) == 1 and first_result is not None:
             return first_result
 
-        assert self.llm is not None
+        if self.llm is None:
+            raise OrchestrationError(
+                "LLM required for multi-route synthesis but not configured"
+            )
         synthesis_prompt = ROUTER_PROMPTS["route.synthesize"].format(
             user_request=input,
             agent_outputs="\n\n".join(outputs),

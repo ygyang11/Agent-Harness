@@ -28,7 +28,7 @@ class TestTerminalTool:
     async def test_chain_with_disallowed_subcommand_is_blocked(self) -> None:
         result = await terminal_tool.execute(command="pwd && whoami", timeout=5)
         assert result.startswith("Error:")
-        assert "command not allowed" in result
+        assert "not in the allowed command list" in result
 
     @pytest.mark.asyncio
     async def test_chain_with_dangerous_token_is_blocked(self) -> None:
@@ -40,7 +40,7 @@ class TestTerminalTool:
     async def test_bash_executor_is_blocked(self) -> None:
         result = await terminal_tool.execute(command="bash script.sh", timeout=5)
         assert result.startswith("Error:")
-        assert "blocked command executor" in result
+        assert "blocked shell executor" in result
 
     @pytest.mark.asyncio
     async def test_cwd_escape_is_blocked(self) -> None:
@@ -87,7 +87,7 @@ class TestTerminalTool:
     async def test_bare_env_var_is_blocked(self) -> None:
         result = await terminal_tool.execute(command="cat $HOME/.bashrc", timeout=5)
         assert result.startswith("Error:")
-        assert "variable expansion" in result
+        assert "variable reference" in result.lower()
 
     @pytest.mark.asyncio
     async def test_dollar_in_quotes_is_blocked(self) -> None:
@@ -100,7 +100,7 @@ class TestTerminalTool:
             command='python -c "import os; os.system(\'id\')"', timeout=5,
         )
         assert result.startswith("Error:")
-        assert "dangerous Python" in result
+        assert "blocked pattern" in result
 
     @pytest.mark.asyncio
     async def test_python_c_subprocess_is_blocked(self) -> None:

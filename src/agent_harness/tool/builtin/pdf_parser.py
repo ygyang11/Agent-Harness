@@ -74,6 +74,9 @@ async def _parse_mineru(url: str, api_key: str) -> str:
         return "Error: PDF parsing timed out"
 
 
+_MAX_ZIP_ENTRY_SIZE = 50 * 1024 * 1024  # 50 MB
+
+
 async def _download_mineru_markdown(session: aiohttp.ClientSession, zip_url: str) -> str:
     """Download ZIP from MinerU and extract the markdown content."""
     import io  # noqa: PLC0415
@@ -86,7 +89,21 @@ async def _download_mineru_markdown(session: aiohttp.ClientSession, zip_url: str
 
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            md_files = [n for n in zf.namelist() if n.endswith(".md")]
+            md_files: list[str] = []
+            for name in zf.namelist():
+                if ".." in name or name.startswith("/"):
+                    logger.warning("Skipping suspicious ZIP entry: %s", name)
+                    continue
+                info = zf.getinfo(name)
+                if info.file_size > _MAX_ZIP_ENTRY_SIZE:
+                    logger.warning(
+                        "Skipping oversized ZIP entry: %s (%d bytes)",
+                        name, info.file_size,
+                    )
+                    continue
+                if name.endswith(".md"):
+                    md_files.append(name)
+
             if not md_files:
                 return "Error: no markdown file found in PDF parsing result"
             target = next((n for n in md_files if "full.md" in n), md_files[0])

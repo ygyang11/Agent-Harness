@@ -6,6 +6,7 @@ Environment variables take highest precedence.
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -131,12 +132,16 @@ class HarnessConfig(BaseModel):
     verbose: bool = False
 
     _instance: ClassVar[HarnessConfig | None] = None
+    _lock: ClassVar[threading.Lock] = threading.Lock()
     _runtime_hooks: DefaultHooks | None = PrivateAttr(default=None)
 
     @classmethod
     def get(cls) -> HarnessConfig:
         """Return the active config, or a default instance."""
-        return cls._instance or cls()
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> HarnessConfig:
@@ -194,15 +199,16 @@ class HarnessConfig(BaseModel):
         env_override: bool = True,
     ) -> HarnessConfig:
         """Load from YAML and optionally override with environment variables."""
-        file_cfg = cls.from_yaml(path) if path is not None else cls()
-        if not env_override:
-            cls._instance = file_cfg
-            return file_cfg
+        with cls._lock:
+            file_cfg = cls.from_yaml(path) if path is not None else cls()
+            if not env_override:
+                cls._instance = file_cfg
+                return file_cfg
 
-        env_cfg = cls.from_env()
-        merged = file_cfg.merge(env_cfg)
-        cls._instance = merged
-        return merged
+            env_cfg = cls.from_env()
+            merged = file_cfg.merge(env_cfg)
+            cls._instance = merged
+            return merged
 
     def merge(self, other: HarnessConfig) -> HarnessConfig:
         """Merge another config into this one. `other` values take precedence."""

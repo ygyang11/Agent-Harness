@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -103,6 +104,15 @@ def _resolve_workspace_path(
     except ValueError as exc:
         raise ValueError(f"path escapes workspace: {path_value}") from exc
 
+    if resolved.is_symlink():
+        real = Path(os.path.realpath(resolved))
+        try:
+            real.relative_to(workspace_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"symlink target escapes workspace: {path_value}"
+            ) from exc
+
     if must_exist and not resolved.exists():
         raise ValueError(f"path does not exist: {path_value}")
 
@@ -149,19 +159,33 @@ def _split_command_chain(command: str) -> list[list[str]]:
 
 def _validate_shell_safety(command: str) -> None:
     if "\x00" in command:
-        raise ValueError("null bytes are not allowed in commands")
+        raise ValueError(
+            "Command contains null bytes (\\x00), which are not allowed. "
+            "Please remove any null characters and try again."
+        )
 
     lowered = command.lower()
     if "${" in command or "$(" in command or "`" in command:
-        raise ValueError("dynamic shell expansion is not allowed")
+        raise ValueError(
+            "Command contains dynamic shell expansion (${...}, $(...), or backticks). "
+            "Shell expansion is restricted to prevent uncontrolled command execution. "
+            "Please use literal values instead and try again."
+        )
 
-    # Bare $VAR expands at bash runtime but is invisible to static shlex
-    # parsing, creating a gap between validation and execution semantics.
-    if _SAFETY.bare_var_re.search(command):
-        raise ValueError("shell variable expansion is not allowed")
+    match = _SAFETY.bare_var_re.search(command)
+    if match:
+        raise ValueError(
+            f"Command contains shell variable reference '{match.group()}'. "
+            "Variable expansion is restricted because variables are resolved at bash "
+            "runtime, bypassing pre-execution validation. "
+            "Please replace with literal values and try again."
+        )
 
     if "eval " in lowered or lowered.startswith("eval"):
-        raise ValueError("eval is not allowed")
+        raise ValueError(
+            "Command contains 'eval', which can execute arbitrary code "
+            "bypassing all safety checks. Please rewrite without eval and try again."
+        )
 
     segments = _split_command_chain(command)
 
@@ -217,8 +241,15 @@ def _validate_python_segment(
     if "-c" in segment[1:]:
         c_index = segment.index("-c", 1)
         code_arg = segment[c_index + 1] if c_index + 1 < len(segment) else ""
-        if _SAFETY.dangerous_python_re.search(code_arg):
-            raise ValueError("dangerous Python operation detected")
+        match = _SAFETY.dangerous_python_re.search(code_arg)
+        if match:
+            matched = match.group(0)
+            raise ValueError(
+                f"Python code contains blocked pattern '{matched}'. "
+                f"This pattern is restricted because it may modify files "
+                f"outside the workspace or execute arbitrary system commands. "
+                f"Please rewrite without using {matched} and try again."
+            )
         return
 
     for arg in segment[1:]:
@@ -306,9 +337,17 @@ def _validate_command(
         )
 
         if base in _SAFETY.blocked_executors:
-            raise ValueError(f"blocked command executor: {base}")
+            raise ValueError(
+                f"'{base}' is a blocked shell executor. Direct shell interpreters "
+                f"(sh, bash, zsh, source) are restricted to prevent unrestricted "
+                f"command execution. Please use an allowed command directly and try again."
+            )
         if base not in _SAFETY.allowed_commands:
-            raise ValueError(f"command not allowed: {base}")
+            raise ValueError(
+                f"'{base}' is not in the allowed command list. "
+                f"Allowed commands: {', '.join(sorted(_SAFETY.allowed_commands))}. "
+                f"Please use one of these commands and try again."
+            )
 
         if base in _SAFETY.no_path_args_commands:
             continue
