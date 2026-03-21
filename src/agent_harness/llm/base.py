@@ -183,12 +183,19 @@ class BaseLLM(ABC, EventEmitter):
         self,
         messages: list[Message],
         tools: list[ToolSchema] | None = None,
+        on_delta: Callable[[StreamDelta], Coroutine[Any, Any, None]] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """Stream with event emission, rate limiting, and retry, returning LLMResponse.
 
         Symmetric with generate_with_events(): both return LLMResponse.
         On transient errors the entire stream is retried from scratch.
+
+        Args:
+            messages: Conversation history.
+            tools: Available tools for function calling.
+            on_delta: Optional async callback invoked for each StreamDelta chunk.
+            **kwargs: Passed through to stream().
         """
         max_retries = self.config.max_retries
         delay = self.config.retry_delay
@@ -201,6 +208,9 @@ class BaseLLM(ABC, EventEmitter):
 
             try:
                 async for delta in self._stream_iter(messages, tools=tools, **kwargs):
+                    if on_delta is not None:
+                        await on_delta(delta)
+
                     if delta.chunk.delta_content:
                         content_parts.append(delta.chunk.delta_content)
                     if delta.chunk.delta_tool_calls:

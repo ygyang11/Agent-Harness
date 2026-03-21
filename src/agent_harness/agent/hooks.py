@@ -15,6 +15,7 @@ from agent_harness.utils.token_counter import truncate_text_by_tokens
 
 if TYPE_CHECKING:
     from agent_harness.core.message import Message, ToolCall, ToolResult
+    from agent_harness.llm.types import StreamDelta
 
 _active_orchestration_parent: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
     "_active_orchestration_parent", default=None
@@ -24,6 +25,9 @@ _active_step_span: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
 )
 _active_run_span: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
     "_active_run_span", default=None
+)
+_streaming_active: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_streaming_active", default=False
 )
 
 
@@ -77,6 +81,9 @@ class DefaultHooks:
         pass
 
     async def on_llm_call(self, agent_name: str, messages: list[Any]) -> None:
+        pass
+
+    async def on_llm_stream_delta(self, agent_name: str, delta: StreamDelta) -> None:
         pass
 
     async def on_tool_call(self, agent_name: str, tool_call: ToolCall) -> None:
@@ -241,6 +248,9 @@ class TracingHooks(DefaultHooks):
         _active_step_span.set(step_span)
 
     async def on_step_end(self, agent_name: str, step: int) -> None:
+        if _streaming_active.get(False):
+            self._console.write_inline("\n")
+            _streaming_active.set(False)
         step_span = _active_step_span.get(None)
         if step_span:
             self._finish_span(step_span)
@@ -254,6 +264,25 @@ class TracingHooks(DefaultHooks):
                 agent=agent_name,
                 message_count=len(messages),
             )
+
+    async def on_llm_stream_delta(self, agent_name: str, delta: StreamDelta) -> None:
+        if delta.chunk.delta_content:
+            if not _streaming_active.get(False):
+                _streaming_active.set(True)
+                step_span = _active_step_span.get(None)
+                depth = self._span_depth_map.get(step_span.span_id, 0) + 1 if step_span else 0
+                self._console.write_inline("  " * depth + "▸ ")
+            self._console.write_inline(delta.chunk.delta_content)
+
+        if delta.chunk.delta_tool_calls:
+            active = _active_step_span.get(None) or _active_run_span.get(None)
+            if active:
+                for tc in delta.chunk.delta_tool_calls:
+                    active.add_event(
+                        "stream_tool_call",
+                        agent=agent_name,
+                        **_summarize_tool_call(tc),
+                    )
 
     async def on_tool_call(self, agent_name: str, tool_call: ToolCall) -> None:
         active = _active_step_span.get(None) or _active_run_span.get(None)
@@ -276,6 +305,9 @@ class TracingHooks(DefaultHooks):
             )
 
     async def on_error(self, agent_name: str, error: Exception) -> None:
+        if _streaming_active.get(False):
+            self._console.write_inline("\n")
+            _streaming_active.set(False)
         step_span = _active_step_span.get(None)
         if step_span:
             self._finish_span(step_span)

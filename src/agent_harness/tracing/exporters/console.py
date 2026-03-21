@@ -34,6 +34,11 @@ class ConsoleExporter:
         self._stream = stream
         self._color = color and hasattr(stream, "isatty") and stream.isatty()
 
+    def write_inline(self, text: str) -> None:
+        """Write text inline without newline (for streaming output)."""
+        self._stream.write(text)
+        self._stream.flush()
+
     def export(self, spans: list[Span]) -> None:
         """Export a list of spans to the console."""
         depth_map = self._build_depth_map(spans)

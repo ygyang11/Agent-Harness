@@ -13,7 +13,7 @@ from agent_harness.core.event import EventEmitter
 from agent_harness.core.message import Message, Role, ToolCall, ToolResult
 from agent_harness.llm.base import BaseLLM
 from agent_harness.llm import create_llm
-from agent_harness.llm.types import LLMResponse, Usage
+from agent_harness.llm.types import LLMResponse, StreamDelta, Usage
 from agent_harness.tool.base import BaseTool, ToolSchema
 from agent_harness.tool.executor import ToolExecutor
 from agent_harness.tool.registry import ToolRegistry
@@ -257,7 +257,12 @@ class BaseAgent(ABC, EventEmitter):
             self.context.state.transition(AgentState.THINKING)
 
         if stream:
-            response = await self.llm.stream_with_events(messages, tools=tools, **kwargs)
+            async def _on_delta(delta: StreamDelta) -> None:
+                await self.hooks.on_llm_stream_delta(self.name, delta)
+
+            response = await self.llm.stream_with_events(
+                messages, tools=tools, on_delta=_on_delta, **kwargs,
+            )
         else:
             response = await self.llm.generate_with_events(messages, tools=tools, **kwargs)
 
