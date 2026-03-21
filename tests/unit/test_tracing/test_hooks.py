@@ -7,7 +7,8 @@ import pytest
 
 from agent_harness.agent.hooks import DefaultHooks, TracingHooks, resolve_hooks
 from agent_harness.core.config import HarnessConfig, TracingConfig
-from agent_harness.core.message import ToolCall
+from agent_harness.core.message import MessageChunk, ToolCall
+from agent_harness.llm.types import FinishReason, StreamDelta, Usage
 from agent_harness.tracing.tracer import Span
 from agent_harness.utils.token_counter import count_tokens
 
@@ -506,3 +507,217 @@ class TestParallelStepSpans:
         assert len(step_spans) == 2
         for step_span in step_spans:
             assert step_span.parent_span_id in {s.span_id for s in agent_spans.values()}
+
+
+def _text_delta(content: str) -> StreamDelta:
+    return StreamDelta(chunk=MessageChunk(delta_content=content))
+
+
+def _tool_call_delta(name: str, args: dict[str, str]) -> StreamDelta:
+    return StreamDelta(
+        chunk=MessageChunk(
+            delta_tool_calls=[ToolCall(name=name, arguments=args)],
+            finish_reason="tool_calls",
+        ),
+        finish_reason=FinishReason.TOOL_CALLS,
+    )
+
+
+def _empty_delta() -> StreamDelta:
+    return StreamDelta(chunk=MessageChunk(), usage=Usage(prompt_tokens=10))
+
+
+class TestStreamingHooks:
+
+    @pytest.mark.asyncio
+    async def test_default_hooks_stream_delta_is_noop(self) -> None:
+        hooks = DefaultHooks()
+        await hooks.on_llm_stream_delta("agent", _text_delta("hello"))
+
+    @pytest.mark.asyncio
+    async def test_text_delta_writes_inline_with_prefix(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        written: list[str] = []
+        monkeypatch.setattr(hooks._console, "write_inline", lambda text: written.append(text))
+
+        await hooks.on_run_start("agent", "input")
+        await hooks.on_step_start("agent", 1)
+
+        await hooks.on_llm_stream_delta("agent", _text_delta("Hello"))
+        await hooks.on_llm_stream_delta("agent", _text_delta(" world"))
+
+        assert written[0] == "    ▸ "
+        assert written[1] == "Hello"
+        assert written[2] == " world"
+        assert len(written) == 3
+
+        await hooks.on_step_end("agent", 1)
+        await hooks.on_run_end("agent", "done")
+
+    @pytest.mark.asyncio
+    async def test_prefix_only_printed_once_per_step(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        written: list[str] = []
+        monkeypatch.setattr(hooks._console, "write_inline", lambda text: written.append(text))
+
+        await hooks.on_run_start("agent", "input")
+        await hooks.on_step_start("agent", 1)
+
+        for word in ["A", "B", "C"]:
+            await hooks.on_llm_stream_delta("agent", _text_delta(word))
+
+        prefix_count = sum(1 for w in written if "▸" in w)
+        assert prefix_count == 1
+
+        await hooks.on_step_end("agent", 1)
+        await hooks.on_run_end("agent", "done")
+
+    @pytest.mark.asyncio
+    async def test_step_end_flushes_newline_after_streaming(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        written: list[str] = []
+        monkeypatch.setattr(hooks._console, "write_inline", lambda text: written.append(text))
+        monkeypatch.setattr(hooks._console, "export_one", lambda span, *, indent: None)
+
+        await hooks.on_run_start("agent", "input")
+        await hooks.on_step_start("agent", 1)
+        await hooks.on_llm_stream_delta("agent", _text_delta("text"))
+        await hooks.on_step_end("agent", 1)
+
+        assert written[-1] == "\n"
+
+        await hooks.on_run_end("agent", "done")
+
+    @pytest.mark.asyncio
+    async def test_step_end_no_newline_without_streaming(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        written: list[str] = []
+        monkeypatch.setattr(hooks._console, "write_inline", lambda text: written.append(text))
+        monkeypatch.setattr(hooks._console, "export_one", lambda span, *, indent: None)
+
+        await hooks.on_run_start("agent", "input")
+        await hooks.on_step_start("agent", 1)
+        await hooks.on_step_end("agent", 1)
+
+        assert len(written) == 0
+
+        await hooks.on_run_end("agent", "done")
+
+    @pytest.mark.asyncio
+    async def test_error_flushes_newline_after_streaming(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        written: list[str] = []
+        monkeypatch.setattr(hooks._console, "write_inline", lambda text: written.append(text))
+        monkeypatch.setattr(hooks._console, "export_one", lambda span, *, indent: None)
+
+        await hooks.on_run_start("agent", "input")
+        await hooks.on_step_start("agent", 1)
+        await hooks.on_llm_stream_delta("agent", _text_delta("partial"))
+        await hooks.on_error("agent", RuntimeError("disconnect"))
+
+        newlines = [w for w in written if w == "\n"]
+        assert len(newlines) == 1
+
+    @pytest.mark.asyncio
+    async def test_tool_call_delta_records_span_event(self) -> None:
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        await hooks.on_run_start("agent", "input")
+        await hooks.on_step_start("agent", 1)
+
+        await hooks.on_llm_stream_delta(
+            "agent",
+            _tool_call_delta("web_search", {"query": "test"}),
+        )
+
+        await hooks.on_step_end("agent", 1)
+
+        step_span = hooks._all_spans[0]
+        event_names = [e.name for e in step_span.events]
+        assert "stream_tool_call" in event_names
+
+        tc_event = next(e for e in step_span.events if e.name == "stream_tool_call")
+        assert tc_event.attributes["tool"] == "web_search"
+
+        await hooks.on_run_end("agent", "done")
+
+    @pytest.mark.asyncio
+    async def test_empty_delta_no_side_effects(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        written: list[str] = []
+        monkeypatch.setattr(hooks._console, "write_inline", lambda text: written.append(text))
+
+        await hooks.on_run_start("agent", "input")
+        await hooks.on_step_start("agent", 1)
+
+        await hooks.on_llm_stream_delta("agent", _empty_delta())
+
+        assert len(written) == 0
+
+        await hooks.on_step_end("agent", 1)
+        await hooks.on_run_end("agent", "done")
+
+    @pytest.mark.asyncio
+    async def test_streaming_indent_depth_in_pipeline(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        written: list[str] = []
+        monkeypatch.setattr(hooks._console, "write_inline", lambda text: written.append(text))
+        monkeypatch.setattr(
+            hooks._console, "print_start",
+            lambda *, kind, name, indent=0, attributes=None: None,
+        )
+
+        await hooks.on_pipeline_start("pipe")
+        await hooks.on_run_start("agent", "input")
+        await hooks.on_step_start("agent", 1)
+
+        await hooks.on_llm_stream_delta("agent", _text_delta("hi"))
+
+        prefix = written[0]
+        assert prefix.startswith("  ")
+        assert "▸" in prefix
+        indent_spaces = len(prefix) - len(prefix.lstrip())
+        assert indent_spaces >= 4
+
+        await hooks.on_step_end("agent", 1)
+        await hooks.on_run_end("agent", "done")
+        await hooks.on_pipeline_end("pipe")
+
+    @pytest.mark.asyncio
+    async def test_concurrent_streaming_independent(self) -> None:
+        import asyncio
+        from agent_harness.agent.hooks import _streaming_active
+
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        await hooks.on_team_start("team", "supervisor")
+
+        results: dict[str, bool] = {}
+
+        async def worker(name: str) -> None:
+            await hooks.on_run_start(name, f"task {name}")
+            await hooks.on_step_start(name, 1)
+            await hooks.on_llm_stream_delta(name, _text_delta("text"))
+            assert _streaming_active.get(False) is True
+            await asyncio.sleep(0.01)
+            await hooks.on_step_end(name, 1)
+            results[name] = not _streaming_active.get(False)
+            await hooks.on_run_end(name, f"done {name}")
+
+        await asyncio.gather(worker("a"), worker("b"))
+        await hooks.on_team_end("team", "supervisor")
+
+        assert results["a"] is True
+        assert results["b"] is True

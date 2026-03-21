@@ -73,6 +73,7 @@ class BaseAgent(ABC, EventEmitter):
         max_steps: int = 20,
         system_prompt: str = "",
         use_long_term_memory: bool = False,
+        stream: bool = False,
         *,
         config: HarnessConfig | None = None,
     ) -> None:
@@ -86,6 +87,7 @@ class BaseAgent(ABC, EventEmitter):
         self.max_steps = max_steps
         self.system_prompt = system_prompt
         self.use_long_term_memory = use_long_term_memory
+        self._stream = stream
         self._total_usage = Usage()
 
         # Set up tool registry and executor
@@ -223,7 +225,6 @@ class BaseAgent(ABC, EventEmitter):
         tools: list[ToolSchema] | None = None,
         use_long_term: bool | None = None,
         long_term_query: str | None = None,
-        stream: bool = False,
         **kwargs: Any,
     ) -> LLMResponse:
         """Call the LLM with current context messages or provided messages.
@@ -234,9 +235,6 @@ class BaseAgent(ABC, EventEmitter):
             use_long_term: Query long-term memory and inject results.
                 If None, falls back to self.use_long_term_memory.
             long_term_query: Custom query for long-term retrieval.
-            stream: If True, uses streaming via llm.stream_with_events().
-                Each chunk is emitted as an event for real-time observation.
-                Returns the same LLMResponse type either way.
             **kwargs: Passed through to the LLM call.
         """
         if use_long_term is None:
@@ -256,7 +254,7 @@ class BaseAgent(ABC, EventEmitter):
         if self.context.state.current != AgentState.THINKING:
             self.context.state.transition(AgentState.THINKING)
 
-        if stream:
+        if self._stream:
             async def _on_delta(delta: StreamDelta) -> None:
                 await self.hooks.on_llm_stream_delta(self.name, delta)
 
