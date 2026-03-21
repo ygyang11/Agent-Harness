@@ -51,6 +51,13 @@ class Pipeline:
         hooks: DefaultHooks | None = None,
         config: HarnessConfig | None = None,
     ) -> None:
+        seen: dict[str, int] = {}
+        for step in steps:
+            if step.name in seen:
+                seen[step.name] += 1
+                step.name = f"{step.name}_{seen[step.name]}"
+            else:
+                seen[step.name] = 1
         self.steps = steps
         self.hooks = resolve_hooks(hooks, config)
 

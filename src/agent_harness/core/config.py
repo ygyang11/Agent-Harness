@@ -17,6 +17,21 @@ if TYPE_CHECKING:
     from agent_harness.agent.hooks import DefaultHooks
 
 
+class _EnvVars:
+    """Central registry of environment variable names."""
+    OPENAI_API_KEY = "OPENAI_API_KEY"
+    ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
+    TAVILY_API_KEY = "TAVILY_API_KEY"
+    SERPAPI_API_KEY = "SERPAPI_API_KEY"
+    MINERU_API_KEY = "MINERU_API_KEY"
+    PADDLEOCR_API_KEY = "PADDLEOCR_API_KEY"
+    HARNESS_LLM_PROVIDER = "HARNESS_LLM_PROVIDER"
+    HARNESS_LLM_MODEL = "HARNESS_LLM_MODEL"
+    HARNESS_LLM_TEMPERATURE = "HARNESS_LLM_TEMPERATURE"
+    HARNESS_LLM_MAX_TOKENS = "HARNESS_LLM_MAX_TOKENS"
+    HARNESS_VERBOSE = "HARNESS_VERBOSE"
+
+
 class LLMConfig(BaseModel):
     """Configuration for an LLM provider."""
 
@@ -42,8 +57,8 @@ class LLMConfig(BaseModel):
         # Auto-resolve API keys from environment if not set
         if self.api_key is None:
             env_map = {
-                "openai": "OPENAI_API_KEY",
-                "anthropic": "ANTHROPIC_API_KEY",
+                "openai": _EnvVars.OPENAI_API_KEY,
+                "anthropic": _EnvVars.ANTHROPIC_API_KEY,
             }
             env_var = env_map.get(self.provider)
             if env_var:
@@ -86,9 +101,9 @@ class SearchConfig(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if self.tavily_api_key is None:
-            self.tavily_api_key = os.environ.get("TAVILY_API_KEY")
+            self.tavily_api_key = os.environ.get(_EnvVars.TAVILY_API_KEY)
         if self.serpapi_api_key is None:
-            self.serpapi_api_key = os.environ.get("SERPAPI_API_KEY")
+            self.serpapi_api_key = os.environ.get(_EnvVars.SERPAPI_API_KEY)
 
 
 class PdfConfig(BaseModel):
@@ -107,9 +122,9 @@ class PdfConfig(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if self.mineru_api_key is None:
-            self.mineru_api_key = os.environ.get("MINERU_API_KEY")
+            self.mineru_api_key = os.environ.get(_EnvVars.MINERU_API_KEY)
         if self.paddleocr_api_key is None:
-            self.paddleocr_api_key = os.environ.get("PADDLEOCR_API_KEY")
+            self.paddleocr_api_key = os.environ.get(_EnvVars.PADDLEOCR_API_KEY)
 
 
 class TracingConfig(BaseModel):
@@ -167,20 +182,20 @@ class HarnessConfig(BaseModel):
         data: dict[str, Any] = {}
 
         llm_data: dict[str, Any] = {}
-        if v := os.environ.get("HARNESS_LLM_PROVIDER"):
+        if v := os.environ.get(_EnvVars.HARNESS_LLM_PROVIDER):
             llm_data["provider"] = v
-        if v := os.environ.get("HARNESS_LLM_MODEL"):
+        if v := os.environ.get(_EnvVars.HARNESS_LLM_MODEL):
             llm_data["model"] = v
-        if v := os.environ.get("HARNESS_LLM_TEMPERATURE"):
+        if v := os.environ.get(_EnvVars.HARNESS_LLM_TEMPERATURE):
             llm_data["temperature"] = float(v)
-        if v := os.environ.get("HARNESS_LLM_MAX_TOKENS"):
+        if v := os.environ.get(_EnvVars.HARNESS_LLM_MAX_TOKENS):
             llm_data["max_tokens"] = int(v)
         if v := os.environ.get("HARNESS_LLM_BASE_URL"):
             llm_data["base_url"] = v
         if llm_data:
             data["llm"] = llm_data
 
-        if v := os.environ.get("HARNESS_VERBOSE"):
+        if v := os.environ.get(_EnvVars.HARNESS_VERBOSE):
             data["verbose"] = v.lower() in ("1", "true", "yes")
 
         tracing_data: dict[str, Any] = {}

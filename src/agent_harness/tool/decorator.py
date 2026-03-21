@@ -6,11 +6,14 @@ generate ToolSchema (JSON Schema) — providing a FastAPI-like developer experie
 from __future__ import annotations
 
 import inspect
+import logging
 import re
-from typing import Any, Callable, Coroutine, get_type_hints
+from typing import Any, Callable, Coroutine, Literal, Union, get_args, get_origin, get_type_hints
 
 from agent_harness.tool.base import BaseTool, ToolSchema
 from agent_harness.utils.async_utils import ensure_async
+
+logger = logging.getLogger(__name__)
 
 # Python type -> JSON Schema type mapping
 _TYPE_MAP: dict[type, str] = {
@@ -25,19 +28,30 @@ _TYPE_MAP: dict[type, str] = {
 
 def _python_type_to_json_schema(py_type: type) -> dict[str, Any]:
     """Convert a Python type hint to a JSON Schema type descriptor."""
-    # Handle Optional (Union[X, None])
-    origin = getattr(py_type, "__origin__", None)
+    origin = get_origin(py_type)
+    args = get_args(py_type)
+
+    if origin is Union:
+        non_none = [a for a in args if a is not type(None)]
+        if len(non_none) == 1:
+            return _python_type_to_json_schema(non_none[0])
+        logger.warning("Union type %s not fully supported, defaulting to string", py_type)
+        return {"type": "string"}
+
+    if origin is Literal:
+        return {"type": "string", "enum": list(args)}
 
     if origin is list:
-        args = getattr(py_type, "__args__", ())
         items = _python_type_to_json_schema(args[0]) if args else {}
         return {"type": "array", "items": items}
 
     if origin is dict:
         return {"type": "object"}
 
-    # Simple types
-    json_type = _TYPE_MAP.get(py_type, "string")
+    json_type = _TYPE_MAP.get(py_type)
+    if json_type is None:
+        logger.warning("Unknown type %s, defaulting to string", py_type)
+        json_type = "string"
     return {"type": json_type}
 
 

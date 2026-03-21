@@ -31,6 +31,17 @@ class LLMAuthenticationError(LLMError):
 
 class LLMContextLengthError(LLMError):
     """Input exceeds model context window."""
+    def __init__(
+        self,
+        message: str = "Context length exceeded",
+        *,
+        actual_tokens: int | None = None,
+        max_tokens: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        self.actual_tokens = actual_tokens
+        self.max_tokens = max_tokens
 
 class LLMResponseError(LLMError):
     """Failed to parse LLM response."""
@@ -46,6 +57,17 @@ class ToolNotFoundError(ToolError):
 
 class ToolTimeoutError(ToolError):
     """Tool execution exceeded timeout."""
+    def __init__(
+        self,
+        message: str = "Tool timed out",
+        *,
+        tool_name: str | None = None,
+        timeout_seconds: float | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        self.tool_name = tool_name
+        self.timeout_seconds = timeout_seconds
 
 class ToolValidationError(ToolError):
     """Tool arguments failed validation."""
@@ -82,6 +104,15 @@ class OrchestrationError(HarnessError):
 
 class CyclicDependencyError(OrchestrationError):
     """Detected cyclic dependency in DAG orchestration."""
+    def __init__(
+        self,
+        message: str = "Cyclic dependency detected",
+        *,
+        cycle_path: list[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        self.cycle_path = cycle_path
 
 
 # --- Agent Errors ---
@@ -91,3 +122,14 @@ class AgentError(HarnessError):
 
 class MaxStepsExceededError(AgentError):
     """Agent exceeded maximum allowed steps."""
+    def __init__(
+        self,
+        message: str = "Max steps exceeded",
+        *,
+        max_steps: int | None = None,
+        actual_steps: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        self.max_steps = max_steps
+        self.actual_steps = actual_steps

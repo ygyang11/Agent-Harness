@@ -86,6 +86,7 @@ class BaseAgent(ABC, EventEmitter):
         self.max_steps = max_steps
         self.system_prompt = system_prompt
         self.use_long_term_memory = use_long_term_memory
+        self._total_usage = Usage()
 
         # Set up tool registry and executor
         self.tool_registry = ToolRegistry()
@@ -253,9 +254,7 @@ class BaseAgent(ABC, EventEmitter):
 
         response = await self.llm.generate_with_events(messages, tools=tools, **kwargs)
 
-        # Accumulate token usage
-        if hasattr(self, '_total_usage'):
-            self._total_usage = self._total_usage + response.usage
+        self._total_usage = self._total_usage + response.usage
 
         # Store assistant message in memory
         await self.context.short_term_memory.add_message(response.message)

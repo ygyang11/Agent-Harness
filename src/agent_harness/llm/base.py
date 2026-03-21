@@ -5,6 +5,7 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections import deque
 from typing import Any, AsyncIterator, Callable, Coroutine, TypeVar
 
 from agent_harness.core.config import LLMConfig
@@ -28,7 +29,7 @@ class RateLimiter:
     def __init__(self, max_requests: int = 60, window_seconds: float = 60.0) -> None:
         self._max_requests = max_requests
         self._window = window_seconds
-        self._timestamps: list[float] = []
+        self._timestamps: deque[float] = deque(maxlen=max_requests)
         self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
@@ -36,10 +37,8 @@ class RateLimiter:
         while True:
             async with self._lock:
                 now = time.monotonic()
-                # Remove timestamps outside the window
-                self._timestamps = [
-                    t for t in self._timestamps if now - t < self._window
-                ]
+                while self._timestamps and now - self._timestamps[0] >= self._window:
+                    self._timestamps.popleft()
                 if len(self._timestamps) < self._max_requests:
                     self._timestamps.append(now)
                     return

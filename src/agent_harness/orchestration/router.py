@@ -71,10 +71,13 @@ class Route(BaseModel, arbitrary_types_allowed=True):
     name: str = ""
     condition: Callable[[str], bool] | str
     description: str = ""
+    _compiled_re: re.Pattern[str] | None = None
 
     def model_post_init(self, __context: object) -> None:
         if not self.name:
             self.name = getattr(self.agent, 'name', 'unnamed')
+        if isinstance(self.condition, str):
+            self._compiled_re = re.compile(self.condition, re.IGNORECASE)
 
 
 class AgentRouter:
@@ -256,6 +259,6 @@ class AgentRouter:
     def _matches(route: Route, input: str) -> bool:
         if callable(route.condition):
             return route.condition(input)
-        if isinstance(route.condition, str):
-            return bool(re.search(route.condition, input, re.IGNORECASE))
+        if route._compiled_re is not None:
+            return bool(route._compiled_re.search(input))
         return False
