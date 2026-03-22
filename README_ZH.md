@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/banner.svg" alt="Agent Harness" width="600">
+  <img src="docs/images/banner.svg" alt="Agent Harness" width="100%">
 </p>
 
 <p align="center">
@@ -123,7 +123,7 @@ asyncio.run(main())
 ## 架构
 
 <p align="center">
-  <img src="docs/images/architecture.svg" alt="Architecture" width="700">
+  <img src="docs/images/architecture.svg" alt="Architecture" width="100%">
 </p>
 
 ### 内置 Tracing
