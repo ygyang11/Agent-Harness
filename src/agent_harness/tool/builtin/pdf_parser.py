@@ -5,13 +5,15 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import aiohttp
 
 from agent_harness.core.config import resolve_pdf_config
 from agent_harness.tool.decorator import tool
+from agent_harness.utils.http_retry import (
+    HttpRetryConfig,
+    http_get_bytes_with_retry,
+    http_get_with_retry,
+    http_post_json_with_retry,
+)
 from agent_harness.utils.token_counter import truncate_text_by_tokens
 
 logger = logging.getLogger(__name__)
@@ -24,12 +26,61 @@ class PdfParserConfig:
     max_output_tokens: int = 15_000
     poll_interval: float = 3.0
     max_poll_attempts: int = 100
+    request_max_attempts: int = 3
+    request_base_delay: float = 1.0
 
 
 _CFG = PdfParserConfig()
 
 _MINERU_BASE = "https://mineru.net"
 _PADDLEOCR_JOB_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
+
+
+def _retry_policy() -> HttpRetryConfig:
+    return HttpRetryConfig(
+        max_attempts=max(1, _CFG.request_max_attempts),
+        base_delay=_CFG.request_base_delay,
+    )
+
+
+async def _get_json_with_retry(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: int = 30,
+) -> tuple[int, dict[str, object] | None, str]:
+    status, body = await http_get_with_retry(
+        url,
+        headers=headers,
+        timeout=timeout,
+        retry=_retry_policy(),
+    )
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        data = None
+    return status, data, body
+
+
+async def _post_json_with_retry(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    json_body: object | None = None,
+    timeout: int = 30,
+) -> tuple[int, dict[str, object] | None, str]:
+    status, body = await http_post_json_with_retry(
+        url,
+        headers=headers,
+        json_body=json_body,
+        timeout=timeout,
+        retry=_retry_policy(),
+    )
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        data = None
+    return status, data, body
 
 
 # ---------------------------------------------------------------------------
@@ -39,53 +90,84 @@ _PADDLEOCR_JOB_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
 
 async def _parse_mineru(url: str, api_key: str) -> str:
     """Parse PDF via MinerU precise API."""
-    import aiohttp  # noqa: PLC0415
-
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
+    try:
+        status, result, body = await _post_json_with_retry(
             f"{_MINERU_BASE}/api/v4/extract/task",
             headers=headers,
-            json={"url": url, "model_version": "vlm", "enable_formula": True, "enable_table": True},
-        ) as resp:
-            result = await resp.json()
-            if result.get("code") != 0:
-                return f"Error: PDF parsing task submission failed: {result.get('msg', 'unknown error')}"
-            task_id: str = result["data"]["task_id"]
+            json_body={
+                "url": url,
+                "model_version": "vlm",
+                "enable_formula": True,
+                "enable_table": True,
+            },
+        )
+    except Exception as exc:
+        return f"Error: PDF parsing task submission failed: {exc}"
+    if status != 200:
+        return f"Error: PDF parsing task submission failed (HTTP {status}): {body[:200]}"
+    if result is None:
+        return "Error: PDF parsing task submission returned invalid JSON"
 
-        for _ in range(_CFG.max_poll_attempts):
-            await asyncio.sleep(_CFG.poll_interval)
-            async with session.get(
+    if result.get("code") != 0:
+        return f"Error: PDF parsing task submission failed: {result.get('msg', 'unknown error')}"
+    data_obj = result.get("data")
+    if not isinstance(data_obj, dict):
+        return "Error: PDF parsing service returned invalid submission payload"
+    task_id_obj = data_obj.get("task_id")
+    task_id = task_id_obj if isinstance(task_id_obj, str) else ""
+    if not task_id:
+        return "Error: PDF parsing service returned no task ID"
+
+    for _ in range(_CFG.max_poll_attempts):
+        await asyncio.sleep(_CFG.poll_interval)
+        try:
+            status, result, _body = await _get_json_with_retry(
                 f"{_MINERU_BASE}/api/v4/extract/task/{task_id}",
                 headers=headers,
-            ) as resp:
-                result = await resp.json()
-                state = result.get("data", {}).get("state", "")
-                if state == "done":
-                    zip_url: str = result["data"].get("full_zip_url", "")
-                    if not zip_url:
-                        return "Error: PDF parsing service returned no result URL"
-                    return await _download_mineru_markdown(session, zip_url)
-                if state == "failed":
-                    err = result.get("data", {}).get("err_msg", "unknown error")
-                    return f"Error: PDF parsing failed: {err}"
+            )
+        except Exception as exc:
+            return f"Error: PDF parsing status polling failed: {exc}"
+        if status != 200:
+            return f"Error: PDF parsing status polling failed (HTTP {status})"
+        if result is None:
+            return "Error: PDF parsing status polling returned invalid JSON"
+        poll_data = result.get("data")
+        if not isinstance(poll_data, dict):
+            return "Error: PDF parsing status polling returned invalid payload"
+        state_obj = poll_data.get("state")
+        state = state_obj if isinstance(state_obj, str) else ""
+        if state == "done":
+            zip_url_obj = poll_data.get("full_zip_url")
+            zip_url = zip_url_obj if isinstance(zip_url_obj, str) else ""
+            if not zip_url:
+                return "Error: PDF parsing service returned no result URL"
+            return await _download_mineru_markdown(zip_url)
+        if state == "failed":
+            err_obj = poll_data.get("err_msg")
+            err = err_obj if isinstance(err_obj, str) and err_obj else "unknown error"
+            return f"Error: PDF parsing failed: {err}"
 
-        return "Error: PDF parsing timed out"
+    return "Error: PDF parsing timed out"
 
 
 _MAX_ZIP_ENTRY_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
-async def _download_mineru_markdown(session: aiohttp.ClientSession, zip_url: str) -> str:
+async def _download_mineru_markdown(zip_url: str) -> str:
     """Download ZIP from MinerU and extract the markdown content."""
     import io  # noqa: PLC0415
     import zipfile  # noqa: PLC0415
 
-    async with session.get(zip_url) as resp:
-        if resp.status != 200:
-            return f"Error: failed to download PDF parsing result (HTTP {resp.status})"
-        data = await resp.read()
+    try:
+        status, data = await http_get_bytes_with_retry(
+            zip_url,
+            retry=_retry_policy(),
+        )
+    except Exception as exc:
+        return f"Error: failed to download PDF parsing result: {exc}"
+    if status != 200:
+        return f"Error: failed to download PDF parsing result (HTTP {status})"
 
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -114,36 +196,66 @@ async def _download_mineru_markdown(session: aiohttp.ClientSession, zip_url: str
 
 async def _parse_mineru_lightweight(url: str) -> str:
     """Parse PDF via MinerU lightweight agent API (no token required)."""
-    import aiohttp  # noqa: PLC0415
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
+    try:
+        status, result, body = await _post_json_with_retry(
             f"{_MINERU_BASE}/api/v1/agent/parse/url",
-            json={"url": url},
-        ) as resp:
-            result = await resp.json()
-            task_id: str = result.get("data", {}).get("task_id", "")
-            if not task_id:
-                return f"Error: PDF parsing task submission failed: {result.get('msg', '')}"
+            json_body={"url": url},
+        )
+    except Exception as exc:
+        return f"Error: PDF parsing task submission failed: {exc}"
+    if status != 200:
+        return f"Error: PDF parsing task submission failed (HTTP {status}): {body[:200]}"
+    if result is None:
+        return "Error: PDF parsing task submission returned invalid JSON"
 
-        for _ in range(_CFG.max_poll_attempts):
-            await asyncio.sleep(_CFG.poll_interval)
-            async with session.get(
+    data_obj = result.get("data")
+    if not isinstance(data_obj, dict):
+        return "Error: PDF parsing service returned invalid submission payload"
+    task_id_obj = data_obj.get("task_id")
+    task_id = task_id_obj if isinstance(task_id_obj, str) else ""
+    if not task_id:
+        msg_obj = result.get("msg")
+        msg = msg_obj if isinstance(msg_obj, str) else ""
+        return f"Error: PDF parsing task submission failed: {msg}"
+
+    for _ in range(_CFG.max_poll_attempts):
+        await asyncio.sleep(_CFG.poll_interval)
+        try:
+            status, result, _body = await _get_json_with_retry(
                 f"{_MINERU_BASE}/api/v1/agent/parse/{task_id}",
-            ) as resp:
-                result = await resp.json()
-                state = result.get("data", {}).get("state", "")
-                if state == "done":
-                    md_url: str = result["data"].get("markdown_url", "")
-                    if not md_url:
-                        return "Error: PDF parsing service returned no result URL"
-                    async with session.get(md_url) as md_resp:
-                        return await md_resp.text()
-                if state == "failed":
-                    err = result.get("data", {}).get("err_msg", "unknown error")
-                    return f"Error: PDF parsing failed: {err}"
+            )
+        except Exception as exc:
+            return f"Error: PDF parsing status polling failed: {exc}"
+        if status != 200:
+            return f"Error: PDF parsing status polling failed (HTTP {status})"
+        if result is None:
+            return "Error: PDF parsing status polling returned invalid JSON"
+        poll_data = result.get("data")
+        if not isinstance(poll_data, dict):
+            return "Error: PDF parsing status polling returned invalid payload"
+        state_obj = poll_data.get("state")
+        state = state_obj if isinstance(state_obj, str) else ""
+        if state == "done":
+            md_url_obj = poll_data.get("markdown_url")
+            md_url = md_url_obj if isinstance(md_url_obj, str) else ""
+            if not md_url:
+                return "Error: PDF parsing service returned no result URL"
+            try:
+                md_status, md_body = await http_get_with_retry(
+                    md_url,
+                    retry=_retry_policy(),
+                )
+            except Exception as exc:
+                return f"Error: failed to download PDF parsing result: {exc}"
+            if md_status != 200:
+                return f"Error: failed to download PDF parsing result (HTTP {md_status})"
+            return md_body
+        if state == "failed":
+            err_obj = poll_data.get("err_msg")
+            err = err_obj if isinstance(err_obj, str) and err_obj else "unknown error"
+            return f"Error: PDF parsing failed: {err}"
 
-        return "Error: PDF parsing timed out"
+    return "Error: PDF parsing timed out"
 
 
 # ---------------------------------------------------------------------------
@@ -153,8 +265,6 @@ async def _parse_mineru_lightweight(url: str) -> str:
 
 async def _parse_paddleocr_with_model(url: str, api_key: str, model: str) -> str:
     """Parse PDF via PaddleOCR async API with the specified model."""
-    import aiohttp  # noqa: PLC0415
-
     headers = {"Authorization": f"bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "fileUrl": url,
@@ -166,48 +276,76 @@ async def _parse_paddleocr_with_model(url: str, api_key: str, model: str) -> str
         },
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            _PADDLEOCR_JOB_URL, headers=headers, json=payload,
-        ) as resp:
-            if resp.status == 429:
-                return "Error: rate limit exceeded"
-            if resp.status != 200:
-                body = await resp.text()
-                return f"Error: PDF parsing task submission failed (HTTP {resp.status}): {body[:200]}"
-            result = await resp.json()
-            job_id: str = result.get("data", {}).get("jobId", "")
-            if not job_id:
-                return "Error: PDF parsing service returned no job ID"
+    try:
+        status, result, body = await _post_json_with_retry(
+            _PADDLEOCR_JOB_URL,
+            headers=headers,
+            json_body=payload,
+        )
+    except Exception as exc:
+        return f"Error: PDF parsing task submission failed: {exc}"
+    if status == 429:
+        return "Error: rate limit exceeded"
+    if status != 200:
+        return f"Error: PDF parsing task submission failed (HTTP {status}): {body[:200]}"
+    if result is None:
+        return "Error: PDF parsing task submission returned invalid JSON"
 
-        for _ in range(_CFG.max_poll_attempts):
-            await asyncio.sleep(_CFG.poll_interval)
-            async with session.get(
+    data_obj = result.get("data")
+    if not isinstance(data_obj, dict):
+        return "Error: PDF parsing service returned invalid submission payload"
+    job_id_obj = data_obj.get("jobId")
+    job_id = job_id_obj if isinstance(job_id_obj, str) else ""
+    if not job_id:
+        return "Error: PDF parsing service returned no job ID"
+
+    for _ in range(_CFG.max_poll_attempts):
+        await asyncio.sleep(_CFG.poll_interval)
+        try:
+            status, result, _body = await _get_json_with_retry(
                 f"{_PADDLEOCR_JOB_URL}/{job_id}",
                 headers={"Authorization": f"bearer {api_key}"},
-            ) as resp:
-                if resp.status == 429:
-                    return "Error: rate limit exceeded"
-                result = await resp.json()
-                state = result.get("data", {}).get("state", "")
-                if state == "done":
-                    json_url: str = result["data"].get("resultUrl", {}).get("jsonUrl", "")
-                    if not json_url:
-                        return "Error: PDF parsing service returned no result URL"
-                    return await _download_paddleocr_markdown(session, json_url)
-                if state == "failed":
-                    err = result.get("data", {}).get("errorMsg", "unknown error")
-                    return f"Error: PDF parsing failed: {err}"
+            )
+        except Exception as exc:
+            return f"Error: PDF parsing status polling failed: {exc}"
+        if status == 429:
+            return "Error: rate limit exceeded"
+        if status != 200:
+            return f"Error: PDF parsing status polling failed (HTTP {status})"
+        if result is None:
+            return "Error: PDF parsing status polling returned invalid JSON"
+        poll_data = result.get("data")
+        if not isinstance(poll_data, dict):
+            return "Error: PDF parsing status polling returned invalid payload"
+        state_obj = poll_data.get("state")
+        state = state_obj if isinstance(state_obj, str) else ""
+        if state == "done":
+            result_url_obj = poll_data.get("resultUrl")
+            result_url = result_url_obj if isinstance(result_url_obj, dict) else {}
+            json_url_obj = result_url.get("jsonUrl")
+            json_url = json_url_obj if isinstance(json_url_obj, str) else ""
+            if not json_url:
+                return "Error: PDF parsing service returned no result URL"
+            return await _download_paddleocr_markdown(json_url)
+        if state == "failed":
+            err_obj = poll_data.get("errorMsg")
+            err = err_obj if isinstance(err_obj, str) and err_obj else "unknown error"
+            return f"Error: PDF parsing failed: {err}"
 
-        return "Error: PDF parsing timed out"
+    return "Error: PDF parsing timed out"
 
 
-async def _download_paddleocr_markdown(session: aiohttp.ClientSession, json_url: str) -> str:
+async def _download_paddleocr_markdown(json_url: str) -> str:
     """Download JSONL result from PaddleOCR and extract markdown text."""
-    async with session.get(json_url) as resp:
-        if resp.status != 200:
-            return f"Error: failed to download PDF parsing result (HTTP {resp.status})"
-        text = await resp.text()
+    try:
+        status, text = await http_get_with_retry(
+            json_url,
+            retry=_retry_policy(),
+        )
+    except Exception as exc:
+        return f"Error: failed to download PDF parsing result: {exc}"
+    if status != 200:
+        return f"Error: failed to download PDF parsing result (HTTP {status})"
 
     pages: list[str] = []
     for line in text.strip().splitlines():
