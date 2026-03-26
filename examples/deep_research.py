@@ -6,48 +6,55 @@ from pathlib import Path
 from agent_harness import BaseTool, ConversationalAgent, HarnessConfig, ReActAgent
 from agent_harness.agent.base import AgentResult
 from agent_harness.orchestration import AgentTeam, DAGNode, DAGOrchestrator, TeamMode
-from agent_harness.tool.builtin import list_notes as builtin_list_notes
-from agent_harness.tool.builtin import read_notes as builtin_read_notes
-from agent_harness.tool.builtin import take_notes as builtin_take_notes
-from agent_harness.tool.builtin import pdf_parser as builtin_pdf_parser
-from agent_harness.tool.builtin import web_fetch as builtin_web_fetch
-from agent_harness.tool.builtin import web_search as builtin_web_search
+from agent_harness.tool.builtin.paper_fetch import paper_fetch as builtin_paper_fetch
+from agent_harness.tool.builtin.paper_search import paper_search as builtin_paper_search
+from agent_harness.tool.builtin.pdf_parser import pdf_parser as builtin_pdf_parser
+from agent_harness.tool.builtin.take_notes import list_notes as builtin_list_notes
+from agent_harness.tool.builtin.take_notes import read_notes as builtin_read_notes
+from agent_harness.tool.builtin.take_notes import take_notes as builtin_take_notes
+from agent_harness.tool.builtin.web_fetch import web_fetch as builtin_web_fetch
+from agent_harness.tool.builtin.web_search import web_search as builtin_web_search
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DEEP_RESEARCH_PROMPTS: dict[str, str] = {
     "planner.system": (
-        "You are a research planner. Decompose the user question into an actionable "
-        "research blueprint, including objectives, research dimensions, evidence "
-        "requirements, and the expected report structure."
+        "You are a research planner for academic deep research. Decompose the user "
+        "question into an actionable blueprint that balances timely evidence and "
+        "scholarly evidence, defines evidence quality criteria, includes uncertainty "
+        "handling, and specifies the expected report structure."
     ),
     "worker.hardware": (
         "You are responsible for hardware-track research: chips, error correction, "
-        "and compute milestones."
+        "and compute milestones. Select suitable retrieval methods autonomously, "
+        "prioritize high-quality evidence, and attribute every major claim."
     ),
     "worker.applications": (
         "You are responsible for application-track research: pharma, finance, "
-        "optimization, and cryptography."
+        "optimization, and cryptography. Use rigorous source evaluation and "
+        "distinguish established findings from speculative claims."
     ),
     "worker.market": (
         "You are responsible for market-track research: ecosystem, funding, "
-        "commercialization, and policy impact."
+        "commercialization, and policy impact. Distinguish facts, forecasts, and "
+        "assumptions with explicit evidence tags."
     ),
     "review.methodology": (
-        "You are a methodology reviewer. Evaluate evidence quality, rigor, and "
-        "argument coherence."
+        "You are a methodology reviewer. Evaluate methodological rigor, source "
+        "quality, and evidence traceability."
     ),
     "review.risk": (
-        "You are a risk reviewer. Identify uncertainties, limitations, and "
-        "counterexamples."
+        "You are a risk reviewer. Identify uncertainties, evidence conflicts, "
+        "limitations, and counterexamples."
     ),
     "review.business": (
         "You are a business reviewer. Evaluate decision value, feasibility, and "
-        "strategic impact."
+        "strategic impact while separating facts from assumptions."
     ),
     "writer.system": (
-        "You are the final report writer. Produce a structured and actionable report "
-        "based on the plan, parallel research outputs, and review feedback."
+        "You are the final report writer. Produce an academic-style report with "
+        "evidence mapping, source index, and uncertainty disclosure based on the "
+        "plan, parallel research outputs, and review feedback."
     ),
 }
 
@@ -124,6 +131,8 @@ async def main() -> None:
     research_tools: list[BaseTool] = [
         builtin_web_search,
         builtin_web_fetch,
+        builtin_paper_search,
+        builtin_paper_fetch,
         builtin_pdf_parser,
         builtin_take_notes,
         builtin_list_notes,
@@ -142,7 +151,13 @@ async def main() -> None:
     print("Phase 2: Parallel research...")
     dag = build_research_dag(config, research_tools)
     dag_result = await dag.run(
-        f"Question:\n{query}\n\nPlanning Blueprint:\n{plan_result.output}"
+        f"Question:\n{query}\n\n"
+        f"Planning Blueprint:\n{plan_result.output}\n\n"
+        "Research Requirements:\n"
+        "- Each major finding should be supported by traceable evidence.\n"
+        "- Prefer multi-source corroboration when possible.\n"
+        "- Mark evidence as [WEB] or [PAPER].\n"
+        "- If full-text evidence is unavailable, disclose limitations explicitly."
     )
     research_bundle = format_dag_outputs(dag_result.outputs)
     print(f"Execution order: {dag_result.execution_order}")
@@ -150,7 +165,14 @@ async def main() -> None:
     print("Phase 3: Cross review...")
     review_team = build_review_team(config)
     review_result = await review_team.run(
-        f"Evaluate the research findings:\nQuestion:\n{query}\n\nPlan:\n{plan_result.output}\n\nResearch:\n{research_bundle}"
+        "Evaluate the research findings with focus on:\n"
+        "- methodological rigor\n"
+        "- evidence quality and credibility\n"
+        "- consistency across source types\n"
+        "- unsupported claims and uncertainty disclosure\n\n"
+        f"Question:\n{query}\n\n"
+        f"Plan:\n{plan_result.output}\n\n"
+        f"Research:\n{research_bundle}"
     )
 
     print("Phase 4: Final synthesis...")
@@ -161,8 +183,14 @@ async def main() -> None:
         config=config,
     )
     final_result = await writer.run(
-        "Generate the final report with clear sections, key findings, risks, and "
-        "actionable recommendations.\n\n"
+        "Generate an academic-style final report with sections:\n"
+        "1. Research Scope and Questions\n"
+        "2. Key Findings\n"
+        "3. Evidence Synthesis ([WEB] vs [PAPER])\n"
+        "4. Conflicts and Uncertainties\n"
+        "5. Actionable Recommendations\n"
+        "6. Source Index\n\n"
+        "Every key finding must map to concrete sources.\n\n"
         f"Question:\n{query}\n\n"
         f"Plan:\n{plan_result.output}\n\n"
         f"Parallel Research:\n{research_bundle}\n\n"
