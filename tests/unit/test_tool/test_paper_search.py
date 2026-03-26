@@ -1,10 +1,15 @@
 """Tests for the paper_search builtin tool."""
 from __future__ import annotations
 
+import json
+import sys
 from xml.etree.ElementTree import fromstring
+
+import pytest
 
 from agent_harness.tool.builtin.paper_search import (
     _build_arxiv_query_url,
+    _fetch_xml,
     _format_paper_results,
     _looks_like_arxiv_id,
     _normalize_arxiv_id,
@@ -189,6 +194,11 @@ class TestFormatResults:
         assert "et al." in result
         assert "7 authors" in result
 
+    def test_footer_uses_single_paper_fetch_hint(self) -> None:
+        papers = [{"title": "X", "authors": [], "abstract": ""}]
+        result = _format_paper_results(papers, source="arxiv")
+        assert 'mode="<metadata|full>"' in result
+
 
 class TestPaperSearchTool:
     async def test_empty_query(self) -> None:
@@ -207,3 +217,242 @@ class TestPaperSearchTool:
         assert "query" in props
         assert "source" in props
         assert "max_results" in props
+
+    @pytest.mark.asyncio
+    async def test_arxiv_failure_returns_error_string(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def _fail_fetch_xml(url: str) -> object:
+            _ = url
+            raise RuntimeError("simulated network failure")
+
+        paper_search_module = sys.modules[_fetch_xml.__module__]
+        monkeypatch.setattr(paper_search_module, "_fetch_xml", _fail_fetch_xml)
+
+        result = await paper_search.execute(query="2301.07041", source="arxiv")
+        assert result.startswith("Error: arXiv request failed:")
+
+    @pytest.mark.asyncio
+    async def test_arxiv_failure_does_not_duplicate_prefix(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def _fail_fetch_xml(url: str) -> object:
+            _ = url
+            raise RuntimeError("arXiv request failed: simulated network failure")
+
+        paper_search_module = sys.modules[_fetch_xml.__module__]
+        monkeypatch.setattr(paper_search_module, "_fetch_xml", _fail_fetch_xml)
+
+        result = await paper_search.execute(query="2301.07041", source="arxiv")
+        assert result == "Error: arXiv request failed: simulated network failure"
+
+
+class _FakeTimeout:
+    def __init__(self, total: int) -> None:
+        self.total = total
+
+
+class _FakeResponse:
+    def __init__(self, status: int, body: str) -> None:
+        self.status = status
+        self._body = body
+
+    async def __aenter__(self) -> _FakeResponse:
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        return False
+
+    async def text(self) -> str:
+        return self._body
+
+    async def read(self) -> bytes:
+        return self._body.encode("utf-8")
+
+
+class _FakeSession:
+    def __init__(
+        self,
+        statuses: list[int],
+        calls: list[int],
+        bodies: list[str] | None = None,
+    ) -> None:
+        self._statuses = statuses
+        self._calls = calls
+        self._bodies = bodies or []
+
+    async def __aenter__(self) -> _FakeSession:
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        return False
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        **kwargs: object,
+    ) -> _FakeResponse:
+        _ = (method, url, kwargs)
+        self._calls.append(1)
+        status = self._statuses[min(len(self._calls) - 1, len(self._statuses) - 1)]
+        if self._bodies:
+            body = self._bodies[min(len(self._calls) - 1, len(self._bodies) - 1)]
+        else:
+            body = f"status={status}"
+        return _FakeResponse(status, body)
+
+
+class _FakeAiohttpModule:
+    class ClientError(Exception):
+        pass
+
+    ClientTimeout = _FakeTimeout
+
+    def __init__(
+        self,
+        statuses: list[int],
+        calls: list[int],
+        bodies: list[str] | None = None,
+    ) -> None:
+        self._statuses = statuses
+        self._calls = calls
+        self._bodies = bodies
+
+    def ClientSession(self) -> _FakeSession:  # noqa: N802
+        return _FakeSession(self._statuses, self._calls, self._bodies)
+
+
+class TestFetchXmlWithRetry:
+    @pytest.mark.asyncio
+    async def test_max_retries_means_total_attempts(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        paper_search_module = sys.modules[_fetch_xml.__module__]
+        call_markers: list[int] = []
+        fake_aiohttp = _FakeAiohttpModule([429, 429, 429, 429], call_markers)
+        monkeypatch.setitem(sys.modules, "aiohttp", fake_aiohttp)
+        monkeypatch.setattr(
+            paper_search_module,
+            "_CFG",
+            paper_search_module.PaperSearchConfig(
+                max_retries=3,
+                retry_base_delay=0.0,
+            ),
+        )
+
+        with pytest.raises(RuntimeError, match="arXiv API returned HTTP 429"):
+            await _fetch_xml("https://example.com")
+        assert len(call_markers) == 3
+
+    @pytest.mark.asyncio
+    async def test_minimum_one_attempt_when_config_is_zero(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        paper_search_module = sys.modules[_fetch_xml.__module__]
+        call_markers: list[int] = []
+        fake_aiohttp = _FakeAiohttpModule(
+            [200],
+            call_markers,
+            bodies=["<feed xmlns='http://www.w3.org/2005/Atom'></feed>"],
+        )
+        monkeypatch.setitem(sys.modules, "aiohttp", fake_aiohttp)
+        monkeypatch.setattr(
+            paper_search_module,
+            "_CFG",
+            paper_search_module.PaperSearchConfig(
+                max_retries=0,
+                retry_base_delay=0.0,
+            ),
+        )
+
+        root = await _fetch_xml("https://example.com")
+
+        assert root.tag.endswith("feed")
+        assert len(call_markers) == 1
+
+    @pytest.mark.asyncio
+    async def test_retries_on_http_5xx(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        paper_search_module = sys.modules[_fetch_xml.__module__]
+        call_markers: list[int] = []
+        fake_aiohttp = _FakeAiohttpModule(
+            [500, 502, 200],
+            call_markers,
+            bodies=["e1", "e2", "<feed xmlns='http://www.w3.org/2005/Atom'></feed>"],
+        )
+        monkeypatch.setitem(sys.modules, "aiohttp", fake_aiohttp)
+        monkeypatch.setattr(
+            paper_search_module,
+            "_CFG",
+            paper_search_module.PaperSearchConfig(max_retries=3, retry_base_delay=0.0),
+        )
+
+        root = await _fetch_xml("https://example.com")
+
+        assert root.tag.endswith("feed")
+        assert len(call_markers) == 3
+
+
+class TestSemanticScholarParsing:
+    @pytest.mark.asyncio
+    async def test_semantic_scholar_invalid_json_returns_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        paper_search_module = sys.modules[_fetch_xml.__module__]
+        call_markers: list[int] = []
+        fake_aiohttp = _FakeAiohttpModule([200], call_markers, bodies=["not-json"])
+        monkeypatch.setitem(sys.modules, "aiohttp", fake_aiohttp)
+        monkeypatch.setattr(
+            paper_search_module,
+            "_CFG",
+            paper_search_module.PaperSearchConfig(max_retries=1, retry_base_delay=0.0),
+        )
+
+        result = await paper_search.execute(query="federated learning", source="semantic_scholar")
+        assert result.startswith("Error: failed to parse Semantic Scholar response:")
+
+    @pytest.mark.asyncio
+    async def test_semantic_scholar_non_object_json_returns_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        paper_search_module = sys.modules[_fetch_xml.__module__]
+        call_markers: list[int] = []
+        fake_aiohttp = _FakeAiohttpModule([200], call_markers, bodies=[json.dumps([1, 2, 3])])
+        monkeypatch.setitem(sys.modules, "aiohttp", fake_aiohttp)
+        monkeypatch.setattr(
+            paper_search_module,
+            "_CFG",
+            paper_search_module.PaperSearchConfig(max_retries=1, retry_base_delay=0.0),
+        )
+
+        result = await paper_search.execute(query="federated learning", source="semantic_scholar")
+        assert result == "Error: unexpected Semantic Scholar response format"
+
+
+class TestPaperSearchDefaults:
+    def test_default_max_results_is_10(self) -> None:
+        schema = paper_search.get_schema()
+        props = schema.parameters["properties"]
+        assert props["max_results"]["default"] == 10
+
+    @pytest.mark.asyncio
+    async def test_max_results_above_30_is_clamped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, int] = {}
+        paper_search_module = sys.modules[_fetch_xml.__module__]
+
+        async def _fake_search_arxiv(query: str, max_results: int) -> str:
+            captured["value"] = max_results
+            _ = query
+            return "ok"
+
+        monkeypatch.setattr(paper_search_module, "_search_arxiv", _fake_search_arxiv)
+        result = await paper_search.execute(query="transformer", source="arxiv", max_results=999)
+
+        assert result == "ok"
+        assert captured["value"] == 30
