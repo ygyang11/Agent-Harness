@@ -194,6 +194,18 @@ class TestFormatResults:
         assert "et al." in result
         assert "7 authors" in result
 
+    def test_many_categories_truncated(self) -> None:
+        papers = [
+            {
+                "title": "X",
+                "authors": [],
+                "abstract": "",
+                "categories": ["cs.AI", "cs.CL", "cs.LG", "cs.CV", "stat.ML"],
+            }
+        ]
+        result = _format_paper_results(papers, source="arxiv")
+        assert "Categories: cs.AI, cs.CL, cs.LG et al. (5 categories)" in result
+
     def test_footer_uses_single_paper_fetch_hint(self) -> None:
         papers = [{"title": "X", "authors": [], "abstract": ""}]
         result = _format_paper_results(papers, source="arxiv")
@@ -217,6 +229,7 @@ class TestPaperSearchTool:
         assert "query" in props
         assert "source" in props
         assert "max_results" in props
+        assert props["source"]["enum"] == ["arxiv", "semantic_scholar"]
 
     @pytest.mark.asyncio
     async def test_arxiv_failure_returns_error_string(

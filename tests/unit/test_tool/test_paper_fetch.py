@@ -105,10 +105,16 @@ class TestPaperFetchTool:
     def test_schema_params(self) -> None:
         schema = paper_fetch.get_schema()
         assert schema.name == "paper_fetch"
+        assert (
+            schema.description
+            == "Fetch a specific paper by ID, returning full text or metadata."
+        )
         props = schema.parameters["properties"]
         assert "paper_id" in props
         assert "mode" in props
         assert "source" in props
+        assert props["mode"]["enum"] == ["metadata", "full"]
+        assert props["source"]["enum"] == ["arxiv", "semantic_scholar"]
 
 
 class _FakeTimeout:

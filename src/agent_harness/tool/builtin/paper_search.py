@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlencode
 from xml.etree.ElementTree import Element, fromstring
 
@@ -257,8 +257,8 @@ def _format_paper_results(papers: list[dict[str, Any]], source: str) -> str:
 
         authors = p.get("authors", [])
         if authors:
-            display = ", ".join(authors[:5])
-            if len(authors) > 5:
+            display = ", ".join(authors[:3])
+            if len(authors) > 3:
                 display += f" et al. ({len(authors)} authors)"
             parts.append(f"   Authors: {display}")
 
@@ -270,7 +270,11 @@ def _format_paper_results(papers: list[dict[str, Any]], source: str) -> str:
         if p.get("venue"):
             parts.append(f"   Venue: {p['venue']}")
         if p.get("categories"):
-            parts.append(f"   Categories: {', '.join(p['categories'][:5])}")
+            categories = p["categories"]
+            display_categories = ", ".join(categories[:3])
+            if len(categories) > 3:
+                display_categories += f" et al. ({len(categories)} categories)"
+            parts.append(f"   Categories: {display_categories}")
         if p.get("citation_count") is not None and p["citation_count"] > 0:
             parts.append(f"   Citations: {p['citation_count']}")
         if p.get("publication_types"):
@@ -290,7 +294,9 @@ def _format_paper_results(papers: list[dict[str, Any]], source: str) -> str:
     footer_lines = ["\n---"]
     footer_lines.append(
         '- Use `paper_fetch(paper_id="<arXiv ID or DOI>", mode="<metadata|full>")` '
-        "for detailed metadata or complete paper content if needed and available."
+        ': `mode="metadata"` usually overlaps with the core info already shown '
+        'here (title/authors/abstract/ids..), while `mode="full"` retrieves the '
+        "full paper body text."
     )
     if source == "arxiv":
         footer_lines.append(
@@ -309,7 +315,7 @@ def _format_paper_results(papers: list[dict[str, Any]], source: str) -> str:
 @tool
 async def paper_search(
     query: str,
-    source: str = "arxiv",
+    source: Literal["arxiv", "semantic_scholar"] = "arxiv",
     max_results: int = 10,
 ) -> str:
     """Search for academic papers and return structured metadata.
@@ -317,14 +323,15 @@ async def paper_search(
     Searches academic paper databases and returns structured results
     including title, authors, abstract, and links.
 
-    For arXiv papers, use source="arxiv" (default). For papers from
+    For arXiv papers, use source="arxiv" (default and recommended for arXiv IDs,
+    preprints, and fast CS/AI literature scans). For papers from
     IEEE, ACM Digital Library, ScienceDirect, PubMed, or other
     publishers, use source="semantic_scholar" which indexes 200M+
     papers across all major academic databases.
 
     Args:
         query: Search query string or arXiv ID (e.g. "2301.07041").
-        source: "arxiv" (default) or "semantic_scholar" for IEEE/ACM/ScienceDirect/PubMed etc.
+        source: "arxiv" by default (recommended for for preprints and CS/AI) or "semantic_scholar" for broader cross-publisher search (e.g., IEEE, ACM, ScienceDirect).
         max_results: Number of results to return (1-30, default 10).
     """
     if not query.strip():

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlencode
 
 from agent_harness.core.config import resolve_paper_config
@@ -367,10 +367,10 @@ async def _try_unpaywall(doi: str) -> str:
 @tool
 async def paper_fetch(
     paper_id: str,
-    mode: str = "metadata",
-    source: str = "arxiv",
+    mode: Literal["metadata", "full"] = "metadata",
+    source: Literal["arxiv", "semantic_scholar"] = "arxiv",
 ) -> str:
-    """Fetch academic paper content by its ID.
+    """Fetch a specific paper by ID, returning full text or metadata.
 
     Two modes: "metadata" returns detailed structured info (title,
     authors, full abstract, citations, fields of study); "full"
@@ -378,7 +378,7 @@ async def paper_fetch(
 
     Args:
         paper_id: arXiv ID like "2301.07041", or DOI:/ARXIV:/ACM:-prefixed ID for S2.
-        mode: "metadata" for structured info, or "full" for complete content.
+        mode: "full" returns raw paper body text for downstream analysis/summarization, "metadata" returns concise paper info (e.g., title, authors, abstract, year/venue, IDs, citation/reference stats) (default).
         source: "arxiv" (default) or "semantic_scholar" for IEEE/ACM/ScienceDirect etc.
     """
     if not paper_id.strip():
