@@ -84,72 +84,73 @@ class OpenAIProvider(BaseLLM):
             messages, tools, tool_choice, temperature, max_tokens, stream=True, **kwargs
         )
 
+        tc_buffer: dict[int, dict[str, str]] = {}
+
         try:
             stream = await self._client.chat.completions.create(**request_kwargs)
+
+            async for chunk in stream:
+                chunk_usage: Usage | None = None
+                if hasattr(chunk, "usage") and chunk.usage:
+                    chunk_usage = Usage(
+                        prompt_tokens=chunk.usage.prompt_tokens or 0,
+                        completion_tokens=chunk.usage.completion_tokens or 0,
+                        total_tokens=chunk.usage.total_tokens or 0,
+                    )
+
+                if not chunk.choices:
+                    if chunk_usage:
+                        yield StreamDelta(
+                            chunk=MessageChunk(),
+                            usage=chunk_usage,
+                        )
+                    continue
+                choice = chunk.choices[0]
+                delta = choice.delta
+
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tc_buffer:
+                            tc_buffer[idx] = {"id": "", "name": "", "args": ""}
+                        if tc.id:
+                            tc_buffer[idx]["id"] = tc.id
+                        if tc.function and tc.function.name:
+                            tc_buffer[idx]["name"] = tc.function.name
+                        if tc.function and tc.function.arguments:
+                            tc_buffer[idx]["args"] += tc.function.arguments
+
+                finish_reason = None
+                delta_tool_calls = None
+                if choice.finish_reason:
+                    finish_reason = _map_finish_reason(choice.finish_reason)
+                    if tc_buffer and finish_reason == FinishReason.TOOL_CALLS:
+                        delta_tool_calls = []
+                        for idx in sorted(tc_buffer):
+                            buf = tc_buffer[idx]
+                            try:
+                                args = json.loads(buf["args"]) if buf["args"] else {}
+                            except json.JSONDecodeError:
+                                args = {}
+                            delta_tool_calls.append(
+                                ToolCall(id=buf["id"], name=buf["name"], arguments=args)
+                            )
+
+                yield StreamDelta(
+                    chunk=MessageChunk(
+                        delta_content=delta.content,
+                        delta_tool_calls=delta_tool_calls,
+                        finish_reason=choice.finish_reason,
+                    ),
+                    finish_reason=finish_reason,
+                )
+
         except openai.RateLimitError as e:
             raise LLMRateLimitError(str(e)) from e
         except openai.AuthenticationError as e:
             raise LLMAuthenticationError(str(e)) from e
         except openai.APIError as e:
             raise LLMError(str(e)) from e
-
-        tc_buffer: dict[int, dict[str, str]] = {}
-
-        async for chunk in stream:
-            chunk_usage: Usage | None = None
-            if hasattr(chunk, "usage") and chunk.usage:
-                chunk_usage = Usage(
-                    prompt_tokens=chunk.usage.prompt_tokens or 0,
-                    completion_tokens=chunk.usage.completion_tokens or 0,
-                    total_tokens=chunk.usage.total_tokens or 0,
-                )
-
-            if not chunk.choices:
-                if chunk_usage:
-                    yield StreamDelta(
-                        chunk=MessageChunk(),
-                        usage=chunk_usage,
-                    )
-                continue
-            choice = chunk.choices[0]
-            delta = choice.delta
-
-            if delta.tool_calls:
-                for tc in delta.tool_calls:
-                    idx = tc.index
-                    if idx not in tc_buffer:
-                        tc_buffer[idx] = {"id": "", "name": "", "args": ""}
-                    if tc.id:
-                        tc_buffer[idx]["id"] = tc.id
-                    if tc.function and tc.function.name:
-                        tc_buffer[idx]["name"] = tc.function.name
-                    if tc.function and tc.function.arguments:
-                        tc_buffer[idx]["args"] += tc.function.arguments
-
-            finish_reason = None
-            delta_tool_calls = None
-            if choice.finish_reason:
-                finish_reason = _map_finish_reason(choice.finish_reason)
-                if tc_buffer and finish_reason == FinishReason.TOOL_CALLS:
-                    delta_tool_calls = []
-                    for idx in sorted(tc_buffer):
-                        buf = tc_buffer[idx]
-                        try:
-                            args = json.loads(buf["args"]) if buf["args"] else {}
-                        except json.JSONDecodeError:
-                            args = {}
-                        delta_tool_calls.append(
-                            ToolCall(id=buf["id"], name=buf["name"], arguments=args)
-                        )
-
-            yield StreamDelta(
-                chunk=MessageChunk(
-                    delta_content=delta.content,
-                    delta_tool_calls=delta_tool_calls,
-                    finish_reason=choice.finish_reason,
-                ),
-                finish_reason=finish_reason,
-            )
 
     def _build_request(
         self,
