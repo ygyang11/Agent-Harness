@@ -12,6 +12,8 @@ from agent_harness.core.config import HarnessConfig, SkillConfig
 from agent_harness.core.errors import MaxStepsExceededError
 from agent_harness.core.message import Message, ToolCall
 from agent_harness.llm.types import FinishReason, LLMResponse, Usage
+from agent_harness.session.base import SessionState
+from agent_harness.session.memory_session import InMemorySession
 from agent_harness.tool.builtin.skill_tool import skill_tool
 
 from tests.conftest import MockLLM, MockTool
@@ -192,3 +194,150 @@ class TestSkillPromptSupplement:
         )
 
         assert await agent._should_inject_system_prompt() is False
+
+
+class TestSessionIntegration:
+    async def test_run_restores_from_session(self) -> None:
+        llm = MockLLM()
+        llm.add_text_response("I remember")
+
+        session = InMemorySession("s1")
+        state = SessionState(
+            session_id="s1",
+            messages=[
+                Message.system("You are helpful."),
+                Message.user("hello"),
+                Message.assistant("hi there"),
+            ],
+        )
+        await session.save_state(state)
+
+        agent = ReActAgent(name="test", llm=llm)
+        result = await agent.run("what did I say?", session=session)
+
+        messages = llm.call_history[0]
+        assert any(m.content == "hello" for m in messages)
+        assert any(m.content == "what did I say?" for m in messages)
+
+    async def test_run_skips_load_when_context_has_data(self) -> None:
+        llm = MockLLM()
+        llm.add_text_response("first")
+        llm.add_text_response("second")
+
+        session = InMemorySession("s1")
+        agent = ReActAgent(name="test", llm=llm)
+
+        await agent.run("hello", session=session)
+        await agent.run("follow up", session=session)
+
+        messages = llm.call_history[1]
+        user_messages = [m for m in messages if m.role.value == "user"]
+        assert len(user_messages) == 2
+
+    async def test_run_saves_session_on_error(self) -> None:
+        llm = MockLLM()
+        for _ in range(5):
+            llm.add_tool_call_response("mock_tool", {"q": "x"})
+
+        tool = MockTool(response="result")
+        session = InMemorySession("s1")
+        agent = ReActAgent(name="test", llm=llm, tools=[tool], max_steps=2)
+
+        with pytest.raises(MaxStepsExceededError):
+            await agent.run("go", session=session)
+
+        saved = await session.load_state()
+        assert saved is not None
+        assert saved.agent_state == "error"
+
+    async def test_restore_replaces_mismatched_system_prompt(self) -> None:
+        llm = MockLLM()
+        llm.add_text_response("ok")
+
+        session = InMemorySession("s1")
+        state = SessionState(
+            session_id="s1",
+            messages=[
+                Message.system("Old prompt."),
+                Message.user("hello"),
+                Message.assistant("hi"),
+            ],
+        )
+        await session.save_state(state)
+
+        agent = ReActAgent(name="test", llm=llm)
+        agent.system_prompt = "New prompt."
+        await agent.run("continue", session=session)
+
+        messages = llm.call_history[0]
+        system_msgs = [m for m in messages if m.role.value == "system"]
+        assert system_msgs[0].content == "New prompt."
+
+    async def test_restore_working_memory_and_variables(self) -> None:
+        session = InMemorySession("s1")
+        state = SessionState(
+            session_id="s1",
+            messages=[Message.system("sys"), Message.user("hi"), Message.assistant("hello")],
+            working_memory_scratchpad={"goal": "test research"},
+            variables_agent={"topic": "5G"},
+            variables_global={"user": "Alice"},
+        )
+        await session.save_state(state)
+
+        agent = ReActAgent(name="test", llm=MockLLM())
+        s = await session.load_state()
+        assert s is not None
+        await agent.context.restore_from_state(s, agent.system_prompt)
+
+        assert agent.context.working_memory.get("goal") == "test research"
+        assert agent.context.variables.get("topic") == "5G"
+        assert agent.context.variables.get("user") == "Alice"
+
+    async def test_run_without_session_unchanged(self) -> None:
+        llm = MockLLM()
+        llm.add_text_response("ok")
+        agent = ReActAgent(name="test", llm=llm)
+        result = await agent.run("hello")
+        assert result.output == "ok"
+
+    async def test_run_with_string_session(self, tmp_path: Path) -> None:
+        import agent_harness.session.file_session as fs_mod
+
+        original = fs_mod._DEFAULT_SESSION_DIR
+        fs_mod._DEFAULT_SESSION_DIR = tmp_path
+        try:
+            llm = MockLLM()
+            llm.add_text_response("ok")
+            agent = ReActAgent(name="test", llm=llm)
+            await agent.run("hello", session="test-session")
+            assert (tmp_path / "test-session.json").exists()
+        finally:
+            fs_mod._DEFAULT_SESSION_DIR = original
+
+    async def test_chat_saves_via_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        llm = MockLLM()
+        llm.add_text_response("hi")
+
+        inputs = iter(["hello", "exit"])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+
+        session = InMemorySession("s1")
+        agent = ReActAgent(name="test", llm=llm)
+        await agent.chat(session=session)
+
+        saved = await session.load_state()
+        assert saved is not None
+        assert any(m.content == "hello" for m in saved.messages)
+
+    async def test_chat_continues_after_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        llm = MockLLM()
+        for _ in range(5):
+            llm.add_tool_call_response("mock_tool", {"q": "x"})
+        llm.add_text_response("recovered")
+
+        tool = MockTool(response="r")
+        inputs = iter(["trigger error", "hello", "exit"])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+
+        agent = ReActAgent(name="test", llm=llm, tools=[tool], max_steps=1)
+        await agent.chat()

@@ -15,7 +15,7 @@ from agent_harness.tool.builtin.take_notes import take_notes as builtin_take_not
 from agent_harness.tool.builtin.web_fetch import web_fetch as builtin_web_fetch
 from agent_harness.tool.builtin.web_search import web_search as builtin_web_search
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 DEEP_RESEARCH_PROMPTS: dict[str, str] = {
     "planner.system": (

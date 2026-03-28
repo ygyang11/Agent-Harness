@@ -2,18 +2,19 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from agent_harness.context.state import StateManager
+from agent_harness.context.variables import ContextVariables
 from agent_harness.core.config import HarnessConfig
 from agent_harness.core.event import EventBus
 from agent_harness.core.message import Message, Role
 from agent_harness.memory.short_term import ShortTermMemory
 from agent_harness.memory.working_term import WorkingMemory
-from agent_harness.context.state import StateManager
-from agent_harness.context.variables import ContextVariables
 
 if TYPE_CHECKING:
     from agent_harness.memory.long_term import LongTermMemory
+    from agent_harness.session.base import SessionState
     from agent_harness.tracing.tracer import Tracer
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,49 @@ class AgentContext:
             event_bus=self.event_bus,
             tracer=self.tracer,
         )
+
+    def to_session_state(self, session_id: str, **metadata: Any) -> SessionState:
+        from agent_harness.context.variables import Scope
+        from agent_harness.session.base import SessionState as _SessionState
+
+        return _SessionState(
+            session_id=session_id,
+            messages=list(self.short_term_memory._messages),
+            working_memory_scratchpad=self.working_memory.to_dict(),
+            working_memory_history=list(self.working_memory._history),
+            variables_agent=self.variables.get_all(Scope.AGENT),
+            variables_global=self.variables.get_all(Scope.GLOBAL),
+            agent_state=self.state.current.value,
+            metadata=metadata,
+        )
+
+    async def restore_from_state(
+        self, state: SessionState, system_prompt: str = ""
+    ) -> None:
+        from agent_harness.context.variables import Scope
+
+        await self.short_term_memory.clear()
+        await self.working_memory.clear()
+        self.variables._agent_store.clear()
+        self.variables._global_store.clear()
+
+        self.short_term_memory._messages = list(state.messages)
+
+        if state.messages and state.messages[0].role == Role.SYSTEM:
+            restored_prompt = state.messages[0].content or ""
+            if restored_prompt != system_prompt:
+                if system_prompt:
+                    self.short_term_memory._messages[0] = Message.system(system_prompt)
+                else:
+                    self.short_term_memory._messages.pop(0)
+
+        self.working_memory._scratchpad = dict(state.working_memory_scratchpad)
+        self.working_memory._history = list(state.working_memory_history)
+
+        for k, v in state.variables_agent.items():
+            self.variables.set(k, v, scope=Scope.AGENT)
+        for k, v in state.variables_global.items():
+            self.variables.set(k, v, scope=Scope.GLOBAL)
 
     def __repr__(self) -> str:
         return (

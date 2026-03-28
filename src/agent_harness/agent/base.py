@@ -3,23 +3,27 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agent_harness.session.base import BaseSession
 
 from pydantic import BaseModel, Field
 
+from agent_harness.agent.hooks import DefaultHooks, resolve_hooks
+from agent_harness.context.context import AgentContext
+from agent_harness.context.state import AgentState
 from agent_harness.core.config import HarnessConfig
-from agent_harness.core.errors import AgentError, MaxStepsExceededError
+from agent_harness.core.errors import MaxStepsExceededError
 from agent_harness.core.event import EventEmitter
 from agent_harness.core.message import Message, Role, ToolCall, ToolResult
-from agent_harness.llm.base import BaseLLM
 from agent_harness.llm import create_llm
+from agent_harness.llm.base import BaseLLM
 from agent_harness.llm.types import LLMResponse, StreamDelta, Usage
 from agent_harness.tool.base import BaseTool, ToolSchema
 from agent_harness.tool.executor import ToolExecutor
 from agent_harness.tool.registry import ToolRegistry
-from agent_harness.context.context import AgentContext
-from agent_harness.context.state import AgentState
-from agent_harness.agent.hooks import DefaultHooks, resolve_hooks
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +113,7 @@ class BaseAgent(ABC, EventEmitter):
         self.use_long_term_memory = use_long_term_memory
         self._stream = stream
         self._total_usage = Usage()
+        self._session_created_at: datetime | None = None
 
         # Set up tool registry and executor
         self.tool_registry = ToolRegistry()
@@ -151,7 +156,12 @@ class BaseAgent(ABC, EventEmitter):
             and (first_message.content or "") == self.system_prompt
         )
 
-    async def run(self, input: str | Message) -> AgentResult:
+    async def run(
+        self,
+        input: str | Message,
+        *,
+        session: str | BaseSession | None = None,
+    ) -> AgentResult:
         """Main execution loop.
 
         Repeatedly calls step() until:
@@ -160,10 +170,23 @@ class BaseAgent(ABC, EventEmitter):
 
         Safe to call multiple times — state is reset automatically when
         the agent is in a terminal state (FINISHED or ERROR).
+
+        Pass session (str or BaseSession) to enable persistence across restarts.
         """
+        from agent_harness.session.base import resolve_session
+
+        session = resolve_session(session)
+
         # Reset state for agent reuse (e.g., team orchestration, pipelines)
         if self.context.state.is_terminal:
             self.context.state.reset()
+
+        # Session restore: only when context is empty (first call or cross-process)
+        if session and not await self.context.short_term_memory.get_context_messages():
+            state = await session.load_state()
+            if state:
+                await self.context.restore_from_state(state, self.system_prompt)
+                self._session_created_at = state.created_at
 
         # Normalize input
         if isinstance(input, str):
@@ -218,6 +241,16 @@ class BaseAgent(ABC, EventEmitter):
                     self.context.state.transition(AgentState.ERROR)
             raise
 
+        finally:
+            if session:
+                now = datetime.now()
+                ss = self.context.to_session_state(
+                    session.session_id, agent_name=self.name,
+                )
+                ss.created_at = self._session_created_at or now
+                ss.updated_at = now
+                await session.save_state(ss)
+
         messages = await self.context.short_term_memory.get_context_messages()
         result = AgentResult(
             output=final_output,
@@ -229,6 +262,31 @@ class BaseAgent(ABC, EventEmitter):
         await self.hooks.on_run_end(self.name, final_output)
         await self.emit("agent.run.end", agent=self.name, output=final_output, steps=len(steps))
         return result
+
+    async def chat(
+        self,
+        *,
+        session: str | BaseSession | None = None,
+        prompt: str = "> ",
+        exit_commands: tuple[str, ...] = ("exit", "quit", "bye"),
+    ) -> None:
+        """Interactive REPL loop. Session is transparently handled by run()."""
+        import readline  # noqa: F401 — enables arrow keys, history, proper backspace
+
+        while True:
+            try:
+                user_input = input(prompt).strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if not user_input:
+                continue
+            if user_input.lower() in exit_commands:
+                break
+            try:
+                result = await self.run(user_input, session=session)
+                print(result.output)
+            except Exception as e:
+                print(f"Error: {e}")
 
     @abstractmethod
     async def step(self) -> StepResult:

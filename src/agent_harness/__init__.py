@@ -26,8 +26,9 @@ from agent_harness.agent.react import ReActAgent
 from agent_harness.agent.planner import PlanAgent, PlanAndExecuteAgent
 from agent_harness.agent.conversational import ConversationalAgent
 from agent_harness.context.context import AgentContext
+from agent_harness.session import BaseSession, SessionState, FileSession, InMemorySession
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     # Logging
@@ -66,4 +67,9 @@ __all__ = [
     # Skills
     "Skill",
     "SkillLoader",
+    # Session
+    "BaseSession",
+    "SessionState",
+    "FileSession",
+    "InMemorySession",
 ]

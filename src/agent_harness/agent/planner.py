@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agent_harness.session.base import BaseSession
 
 from pydantic import BaseModel, Field
 
-from agent_harness.agent.base import BaseAgent, StepResult, AgentResult
+from agent_harness.agent.base import AgentResult, BaseAgent, StepResult
 from agent_harness.context.state import AgentState
 from agent_harness.core.message import Message
 from agent_harness.llm.types import Usage
@@ -316,9 +319,26 @@ class PlanAndExecuteAgent(BaseAgent):
         """Not used — run() is overridden."""
         return StepResult()
 
-    async def run(self, input: str | Message) -> AgentResult:
+    async def run(
+        self,
+        input: str | Message,
+        *,
+        session: str | BaseSession | None = None,
+    ) -> AgentResult:
+        from datetime import datetime
+
+        from agent_harness.session.base import resolve_session
+
+        session = resolve_session(session)
+
         if self.context.state.is_terminal:
             self.context.state.reset()
+
+        if session and not await self.context.short_term_memory.get_context_messages():
+            state = await session.load_state()
+            if state:
+                await self.context.restore_from_state(state, self.system_prompt)
+                self._session_created_at = state.created_at
 
         input_text = input if isinstance(input, str) else (input.content or "")
 
@@ -509,6 +529,16 @@ class PlanAndExecuteAgent(BaseAgent):
             if not self.context.state.is_terminal:
                 self.context.state.transition(AgentState.ERROR)
             raise
+
+        finally:
+            if session:
+                now = datetime.now()
+                ss = self.context.to_session_state(
+                    session.session_id, agent_name=self.name,
+                )
+                ss.created_at = self._session_created_at or now
+                ss.updated_at = now
+                await session.save_state(ss)
 
     @staticmethod
     def _step_signature(step: PlanStep) -> tuple[str, str]:

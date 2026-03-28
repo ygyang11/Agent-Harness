@@ -11,7 +11,7 @@ from agent_harness import ConversationalAgent, HarnessConfig
 from agent_harness.orchestration import AgentTeam, TeamMode
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 AgentsTriple = tuple[ConversationalAgent, ConversationalAgent, ConversationalAgent]
