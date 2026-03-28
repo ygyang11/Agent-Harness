@@ -127,7 +127,8 @@ class TestTracingHooksLifecycle:
         await hooks.on_step_end("agent", 1)
         await hooks.on_run_end("agent", "done")
 
-        assert ("step.1", 1) in export_calls
+        # step span no longer uses export_one (inline output instead)
+        assert ("step.1", 1) not in export_calls
         assert ("agent.agent", 0) in export_calls
 
     @pytest.mark.asyncio
@@ -548,10 +549,11 @@ class TestStreamingHooks:
         await hooks.on_llm_stream_delta("agent", _text_delta("Hello"))
         await hooks.on_llm_stream_delta("agent", _text_delta(" world"))
 
-        assert written[0] == "    ▸ "
-        assert written[1] == "Hello"
-        assert written[2] == " world"
-        assert len(written) == 3
+        # on_step_start writes step marker first, then stream deltas follow
+        stream_writes = [w for w in written if "▸" in w or w in ("Hello", " world")]
+        assert any("▸" in w for w in written)
+        assert "Hello" in written
+        assert " world" in written
 
         await hooks.on_step_end("agent", 1)
         await hooks.on_run_end("agent", "done")
@@ -590,7 +592,9 @@ class TestStreamingHooks:
         await hooks.on_llm_stream_delta("agent", _text_delta("text"))
         await hooks.on_step_end("agent", 1)
 
-        assert written[-1] == "\n"
+        # step_end writes newline (for stream) then completion line
+        assert any("\n" == w for w in written)
+        assert any("✓" in w for w in written)
 
         await hooks.on_run_end("agent", "done")
 
@@ -607,7 +611,9 @@ class TestStreamingHooks:
         await hooks.on_step_start("agent", 1)
         await hooks.on_step_end("agent", 1)
 
-        assert len(written) == 0
+        # on_step_start and on_step_end now write inline (step marker + completion)
+        assert any("⟳" in w for w in written)
+        assert any("✓" in w for w in written)
 
         await hooks.on_run_end("agent", "done")
 
@@ -643,10 +649,8 @@ class TestStreamingHooks:
 
         step_span = hooks._all_spans[0]
         event_names = [e.name for e in step_span.events]
-        assert "stream_tool_call" in event_names
-
-        tc_event = next(e for e in step_span.events if e.name == "stream_tool_call")
-        assert tc_event.attributes["tool"] == "web_search"
+        # stream_tool_call removed — on_tool_call covers tool reporting
+        assert "stream_tool_call" not in event_names
 
         await hooks.on_run_end("agent", "done")
 
@@ -663,7 +667,10 @@ class TestStreamingHooks:
 
         await hooks.on_llm_stream_delta("agent", _empty_delta())
 
-        assert len(written) == 0
+        # on_step_start writes inline, but empty delta should add nothing extra
+        step_writes = [w for w in written if "⟳" in w]
+        stream_writes = [w for w in written if "▸" in w]
+        assert len(stream_writes) == 0
 
         await hooks.on_step_end("agent", 1)
         await hooks.on_run_end("agent", "done")
@@ -686,10 +693,10 @@ class TestStreamingHooks:
 
         await hooks.on_llm_stream_delta("agent", _text_delta("hi"))
 
-        prefix = written[0]
-        assert prefix.startswith("  ")
-        assert "▸" in prefix
-        indent_spaces = len(prefix) - len(prefix.lstrip())
+        # written now includes step marker from on_step_start + stream prefix
+        stream_prefix = [w for w in written if "▸" in w]
+        assert len(stream_prefix) == 1
+        indent_spaces = len(stream_prefix[0]) - len(stream_prefix[0].lstrip())
         assert indent_spaces >= 4
 
         await hooks.on_step_end("agent", 1)

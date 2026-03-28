@@ -246,6 +246,8 @@ class TracingHooks(DefaultHooks):
             f"step.{step}", kind="internal", parent_span=run_span, agent=agent_name,
         )
         _active_step_span.set(step_span)
+        indent = self._span_depth_map.get(step_span.span_id, 0)
+        self._console.write_inline(f"{'  ' * indent}⟳ step.{step}\n")
 
     async def on_step_end(self, agent_name: str, step: int) -> None:
         if _streaming_active.get(False):
@@ -253,16 +255,26 @@ class TracingHooks(DefaultHooks):
             _streaming_active.set(False)
         step_span = _active_step_span.get(None)
         if step_span:
-            self._finish_span(step_span)
+            step_span.finish()
+            self._all_spans.append(step_span)
+            if step_span in self._span_stack:
+                self._span_stack.remove(step_span)
+            indent = self._span_depth_map.get(step_span.span_id, 0)
+            duration = (
+                f"{step_span.duration_ms:.1f}ms"
+                if step_span.duration_ms is not None else "..."
+            )
+            self._console.write_inline(f"{'  ' * indent}✓ {step_span.name} ({duration})\n")
             _active_step_span.set(None)
 
     async def on_llm_call(self, agent_name: str, messages: list[Any]) -> None:
         active = _active_step_span.get(None) or _active_run_span.get(None)
         if active:
-            active.add_event(
-                "llm_call",
-                agent=agent_name,
-                message_count=len(messages),
+            active.add_event("llm_call", agent=agent_name, message_count=len(messages))
+            indent = self._span_depth_map.get(active.span_id, 0) + 1
+            self._console.write_inline(
+                f"{'  ' * indent}• llm_call "
+                f"{{agent={agent_name}, message_count={len(messages)}}}\n"
             )
 
     async def on_llm_stream_delta(self, agent_name: str, delta: StreamDelta) -> None:
@@ -270,38 +282,38 @@ class TracingHooks(DefaultHooks):
             if not _streaming_active.get(False):
                 _streaming_active.set(True)
                 step_span = _active_step_span.get(None)
-                depth = self._span_depth_map.get(step_span.span_id, 0) + 1 if step_span else 0
+                depth = (
+                    self._span_depth_map.get(step_span.span_id, 0) + 1
+                    if step_span else 0
+                )
                 self._console.write_inline("  " * depth + "▸ ")
             self._console.write_inline(delta.chunk.delta_content)
 
-        if delta.chunk.delta_tool_calls:
-            active = _active_step_span.get(None) or _active_run_span.get(None)
-            if active:
-                for tc in delta.chunk.delta_tool_calls:
-                    active.add_event(
-                        "stream_tool_call",
-                        agent=agent_name,
-                        **_summarize_tool_call(tc),
-                    )
-
     async def on_tool_call(self, agent_name: str, tool_call: ToolCall) -> None:
+        if _streaming_active.get(False):
+            self._console.write_inline("\n")
+            _streaming_active.set(False)
         active = _active_step_span.get(None) or _active_run_span.get(None)
         if active:
             details = _summarize_tool_call(tool_call)
             active.add_event("tool_call", agent=agent_name, **details)
+            indent = self._span_depth_map.get(active.span_id, 0) + 1
+            self._console.write_inline(
+                f"{'  ' * indent}• tool_call "
+                f"{{agent={agent_name}, tool={details['tool']}, args={details['args']}}}\n"
+            )
 
     async def on_tool_result(self, agent_name: str, result: Any) -> None:
         active = _active_step_span.get(None) or _active_run_span.get(None)
         if active:
-            output = str(getattr(result, "output", result))
-            active.add_event(
-                "tool_result",
-                agent=agent_name,
-                output=truncate_text_by_tokens(
-                    output,
-                    max_tokens=_TRACE_TEXT_MAX_TOKENS,
-                    suffix="",
-                ),
+            output = result.content if hasattr(result, "content") else str(result)
+            truncated = truncate_text_by_tokens(
+                output, max_tokens=_TRACE_TEXT_MAX_TOKENS, suffix="",
+            )
+            active.add_event("tool_result", agent=agent_name, output=truncated)
+            indent = self._span_depth_map.get(active.span_id, 0) + 1
+            self._console.write_inline(
+                f"{'  ' * indent}• tool_result {{agent={agent_name}, output={truncated}}}\n"
             )
 
     async def on_error(self, agent_name: str, error: Exception) -> None:
@@ -310,7 +322,16 @@ class TracingHooks(DefaultHooks):
             _streaming_active.set(False)
         step_span = _active_step_span.get(None)
         if step_span:
-            self._finish_span(step_span)
+            step_span.finish()
+            self._all_spans.append(step_span)
+            if step_span in self._span_stack:
+                self._span_stack.remove(step_span)
+            indent = self._span_depth_map.get(step_span.span_id, 0)
+            duration = (
+                f"{step_span.duration_ms:.1f}ms"
+                if step_span.duration_ms is not None else "..."
+            )
+            self._console.write_inline(f"{'  ' * indent}✗ {step_span.name} ({duration})\n")
             _active_step_span.set(None)
         run_span = _active_run_span.get(None)
         _active_run_span.set(None)

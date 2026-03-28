@@ -77,9 +77,10 @@ async def run_agent(use_stream: bool) -> None:
     )
 
     query = (
-        "What's the weather in Paris and Tokyo? "
+        "What's the weather in Paris and Tokyo? Give me your thinking before tool call"
         "Also, what is the population of France divided by 4?"
     )
+    # query = "who are you, what can you do?"
     print(f"Query: {query}\n")
 
     result = await agent.run(query)
