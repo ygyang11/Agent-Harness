@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_harness.tool.builtin.terminal_tool import terminal_tool
+from agent_app.tools.terminal_tool import terminal_tool
 
 
 class TestTerminalTool:

@@ -9,7 +9,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_web_search_missing_api_key() -> None:
     """web_search returns error when API key is missing."""
-    from agent_harness.tool.builtin.web_search import web_search
+    from agent_app.tools.web_search import web_search
 
     with patch("agent_harness.core.config.resolve_search_config") as mock_cfg:
         cfg = MagicMock()
@@ -25,7 +25,7 @@ async def test_web_search_missing_api_key() -> None:
 @pytest.mark.asyncio
 async def test_pdf_parser_empty_url() -> None:
     """pdf_parser returns error on empty URL."""
-    from agent_harness.tool.builtin.pdf_parser import pdf_parser
+    from agent_app.tools.pdf_parser import pdf_parser
 
     result = await pdf_parser.execute(url="")
     assert result.startswith("Error:")
@@ -34,7 +34,7 @@ async def test_pdf_parser_empty_url() -> None:
 @pytest.mark.asyncio
 async def test_pdf_parser_whitespace_url() -> None:
     """pdf_parser returns error on whitespace-only URL."""
-    from agent_harness.tool.builtin.pdf_parser import pdf_parser
+    from agent_app.tools.pdf_parser import pdf_parser
 
     result = await pdf_parser.execute(url="   ")
     assert result.startswith("Error:")

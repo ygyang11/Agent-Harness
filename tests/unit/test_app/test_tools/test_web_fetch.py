@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_harness.tool.builtin.web_fetch import (
+from agent_app.tools.web_fetch import (
     _extract_text_from_html,
     _format_response,
     _is_binary_content_type,

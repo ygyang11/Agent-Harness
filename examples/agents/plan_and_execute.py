@@ -7,9 +7,9 @@ import asyncio
 from pathlib import Path
 
 from agent_harness import PlanAndExecuteAgent, HarnessConfig, tool
-from agent_harness.tool.builtin import pdf_parser as builtin_pdf_parser
-from agent_harness.tool.builtin import web_fetch as builtin_web_fetch
-from agent_harness.tool.builtin import web_search as builtin_web_search
+from agent_app.tools import pdf_parser as builtin_pdf_parser
+from agent_app.tools import web_fetch as builtin_web_fetch
+from agent_app.tools import web_search as builtin_web_search
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

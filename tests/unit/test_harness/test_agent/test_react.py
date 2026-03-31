@@ -14,7 +14,7 @@ from agent_harness.core.message import Message, ToolCall
 from agent_harness.llm.types import FinishReason, LLMResponse, Usage
 from agent_harness.session.base import SessionState
 from agent_harness.session.memory_session import InMemorySession
-from agent_harness.tool.builtin.skill_tool import skill_tool
+from agent_app.tools.skill_tool import skill_tool
 
 from tests.conftest import MockLLM, MockTool
 

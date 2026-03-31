@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_harness.tool.builtin.take_notes import list_notes, read_notes, take_notes
+from agent_app.tools.take_notes import list_notes, read_notes, take_notes
 from agent_harness.utils.token_counter import count_tokens
 
 

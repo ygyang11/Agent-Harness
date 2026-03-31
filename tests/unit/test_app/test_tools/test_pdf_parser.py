@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from agent_harness.core.config import PdfConfig
-from agent_harness.tool.builtin.pdf_parser import (
+from agent_app.tools.pdf_parser import (
     _download_mineru_markdown,
     _download_paddleocr_markdown,
     _get_json_with_retry,
@@ -33,7 +33,7 @@ class TestPdfParserValidation:
     async def test_unknown_provider_returns_error(self) -> None:
         fake_cfg = PdfConfig(provider="unknown")
         with patch(
-            "agent_harness.tool.builtin.pdf_parser.resolve_pdf_config",
+            "agent_app.tools.pdf_parser.resolve_pdf_config",
             return_value=fake_cfg,
         ):
             result = await pdf_parser.execute(url="https://example.com/doc.pdf")
@@ -43,7 +43,7 @@ class TestPdfParserValidation:
     async def test_paddleocr_no_api_key_returns_error(self) -> None:
         fake_cfg = PdfConfig(provider="paddleocr", paddleocr_api_key=None)
         with patch(
-            "agent_harness.tool.builtin.pdf_parser.resolve_pdf_config",
+            "agent_app.tools.pdf_parser.resolve_pdf_config",
             return_value=fake_cfg,
         ):
             result = await pdf_parser.execute(url="https://example.com/doc.pdf")

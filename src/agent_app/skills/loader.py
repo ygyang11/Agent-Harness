@@ -50,11 +50,19 @@ class _SkillMeta(NamedTuple):
     dir: Path
 
 
+def _find_project_root() -> Path:
+    current = Path(__file__).resolve().parent
+    while current != current.parent:
+        if (current / "LICENSE").exists():
+            return current
+        current = current.parent
+    return Path.cwd()
+
+
 class SkillLoader:
     """Loads skills from multiple directories using progressive disclosure."""
 
-    # Project root: src/agent_harness/skills/loader.py -> src/agent_harness -> src -> Agent-Harness
-    _PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent.parent
+    _PROJECT_ROOT: Path = _find_project_root()
 
     def __init__(self, dirs: list[str | Path]) -> None:
         self._dirs = self._resolve_dirs(dirs)

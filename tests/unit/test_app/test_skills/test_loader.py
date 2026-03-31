@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from agent_harness.skills.loader import SkillLoader
+from agent_app.skills.loader import SkillLoader
 
 
 class TestSkillLoaderScan:
@@ -149,6 +149,6 @@ class TestSkillLoaderNameCollisionWarning:
             (sd / "SKILL.md").write_text(
                 "---\nname: dup\ndescription: duplicate\n---\n\nbody\n"
             )
-        with caplog.at_level(logging.WARNING, logger="agent_harness.skills.loader"):
+        with caplog.at_level(logging.WARNING, logger="agent_app.skills.loader"):
             SkillLoader([dir_a, dir_b])
         assert any("shadows" in record.message for record in caplog.records)

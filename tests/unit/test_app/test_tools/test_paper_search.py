@@ -7,7 +7,7 @@ from xml.etree.ElementTree import fromstring
 
 import pytest
 
-from agent_harness.tool.builtin.paper_search import (
+from agent_app.tools.paper_search import (
     _build_arxiv_query_url,
     _fetch_xml,
     _format_paper_results,

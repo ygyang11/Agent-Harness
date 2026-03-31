@@ -102,7 +102,7 @@ def _format_metadata(paper: dict[str, Any]) -> str:
 
 
 async def _fetch_arxiv_metadata(arxiv_id: str) -> str:
-    from agent_harness.tool.builtin.paper_search import (
+    from agent_app.tools.paper_search import (
         _fetch_xml,
         _normalize_arxiv_id,
         _parse_arxiv_entry,
@@ -133,7 +133,7 @@ async def _fetch_arxiv_metadata(arxiv_id: str) -> str:
 
 
 async def _fetch_s2_metadata(paper_id: str, api_key: str | None) -> str:
-    from agent_harness.tool.builtin.paper_search import (
+    from agent_app.tools.paper_search import (
         _parse_s2_paper,
     )
 
@@ -202,7 +202,7 @@ async def _fetch_full_content(
     paper_id: str, source: str, api_key: str | None
 ) -> str:
     if source == "arxiv":
-        from agent_harness.tool.builtin.paper_search import _normalize_arxiv_id
+        from agent_app.tools.paper_search import _normalize_arxiv_id
 
         clean_id = _normalize_arxiv_id(paper_id)
 
@@ -241,7 +241,7 @@ async def _try_arxiv_html(arxiv_id: str) -> str | None:
     if "<html" not in lowered and "<!doctype html" not in lowered:
         return None
 
-    from agent_harness.tool.builtin.web_fetch import _extract_text_from_html
+    from agent_app.tools.web_fetch import _extract_text_from_html
 
     text = _extract_text_from_html(body)
     if len(text.strip()) < 500:
@@ -252,7 +252,7 @@ async def _try_arxiv_html(arxiv_id: str) -> str | None:
 async def _fetch_via_pdf_parser(
     pdf_url: str, paper_id: str = ""
 ) -> str:
-    from agent_harness.tool.builtin.pdf_parser import pdf_parser as _pdf_parser
+    from agent_app.tools.pdf_parser import pdf_parser as _pdf_parser
 
     result = await _pdf_parser.execute(url=pdf_url)
 

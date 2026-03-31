@@ -6,14 +6,14 @@ from pathlib import Path
 from agent_harness import BaseTool, ConversationalAgent, HarnessConfig, ReActAgent
 from agent_harness.agent.base import AgentResult
 from agent_harness.orchestration import AgentTeam, DAGNode, DAGOrchestrator, TeamMode
-from agent_harness.tool.builtin.paper_fetch import paper_fetch as builtin_paper_fetch
-from agent_harness.tool.builtin.paper_search import paper_search as builtin_paper_search
-from agent_harness.tool.builtin.pdf_parser import pdf_parser as builtin_pdf_parser
-from agent_harness.tool.builtin.take_notes import list_notes as builtin_list_notes
-from agent_harness.tool.builtin.take_notes import read_notes as builtin_read_notes
-from agent_harness.tool.builtin.take_notes import take_notes as builtin_take_notes
-from agent_harness.tool.builtin.web_fetch import web_fetch as builtin_web_fetch
-from agent_harness.tool.builtin.web_search import web_search as builtin_web_search
+from agent_app.tools.paper_fetch import paper_fetch as builtin_paper_fetch
+from agent_app.tools.paper_search import paper_search as builtin_paper_search
+from agent_app.tools.pdf_parser import pdf_parser as builtin_pdf_parser
+from agent_app.tools.take_notes import list_notes as builtin_list_notes
+from agent_app.tools.take_notes import read_notes as builtin_read_notes
+from agent_app.tools.take_notes import take_notes as builtin_take_notes
+from agent_app.tools.web_fetch import web_fetch as builtin_web_fetch
+from agent_app.tools.web_search import web_search as builtin_web_search
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 

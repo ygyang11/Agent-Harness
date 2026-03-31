@@ -151,8 +151,7 @@ class BaseAgent(ABC, EventEmitter):
 
     @staticmethod
     def _has_skill_tool(tools: list[BaseTool]) -> bool:
-        from agent_harness.tool.builtin.skill_tool import SkillTool
-        return any(isinstance(t, SkillTool) for t in tools)
+        return any(t.name == "skill_tool" for t in tools)
 
     @property
     def tools(self) -> list[BaseTool]:

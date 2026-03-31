@@ -19,7 +19,7 @@ import asyncio
 from pathlib import Path
 
 from agent_harness import HarnessConfig, ReActAgent
-from agent_harness.tool.builtin import web_search
+from agent_app.tools import web_search
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 

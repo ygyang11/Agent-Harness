@@ -284,6 +284,9 @@ class TracingHooks(DefaultHooks):
     async def on_approval_request(
         self, agent_name: str, request: ApprovalRequest
     ) -> None:
+        if _streaming_active.get(False):
+            self._cwrite("\n")
+            _streaming_active.set(False)
         active = _active_step_span.get(None) or _active_run_span.get(None)
         indent = self._span_depth_map.get(active.span_id, 0) + 1 if active else 1
         icon = ICONS.get("pending", "")
@@ -294,6 +297,9 @@ class TracingHooks(DefaultHooks):
     async def on_approval_result(
         self, agent_name: str, result: ApprovalResult
     ) -> None:
+        if _streaming_active.get(False):
+            self._cwrite("\n")
+            _streaming_active.set(False)
         active = _active_step_span.get(None) or _active_run_span.get(None)
         indent = self._span_depth_map.get(active.span_id, 0) + 1 if active else 1
         icon_map = {

@@ -1,7 +1,7 @@
 """Tests for builtin tool exports."""
 from __future__ import annotations
 
-from agent_harness.tool.builtin import BUILTIN_TOOLS
+from agent_app.tools import BUILTIN_TOOLS
 
 
 class TestBuiltinTools:

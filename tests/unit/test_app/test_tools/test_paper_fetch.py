@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from agent_harness.tool.builtin.paper_fetch import (
+from agent_app.tools.paper_fetch import (
     _fetch_arxiv_metadata,
     _format_metadata,
     paper_fetch,
@@ -198,7 +198,7 @@ class TestFetchArxivMetadata:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         paper_fetch_module = sys.modules[_fetch_arxiv_metadata.__module__]
-        paper_search_module = sys.modules["agent_harness.tool.builtin.paper_search"]
+        paper_search_module = sys.modules["agent_app.tools.paper_search"]
 
         async def _fail_fetch_xml(url: str) -> object:
             _ = url
@@ -214,7 +214,7 @@ class TestFetchArxivMetadata:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         paper_fetch_module = sys.modules[_fetch_arxiv_metadata.__module__]
-        paper_search_module = sys.modules["agent_harness.tool.builtin.paper_search"]
+        paper_search_module = sys.modules["agent_app.tools.paper_search"]
 
         async def _fail_fetch_xml(url: str) -> object:
             _ = url

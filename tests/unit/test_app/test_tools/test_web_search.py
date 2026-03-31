@@ -1,7 +1,7 @@
 """Tests for web_search tool output formatting."""
 from __future__ import annotations
 
-from agent_harness.tool.builtin.web_search import _format_result, _format_search_results
+from agent_app.tools.web_search import _format_result, _format_search_results
 
 
 class TestFormatResult:

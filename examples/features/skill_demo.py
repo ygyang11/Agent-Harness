@@ -8,7 +8,7 @@ import asyncio
 from pathlib import Path
 
 from agent_harness import HarnessConfig, ReActAgent
-from agent_harness.tool.builtin.skill_tool import skill_tool
+from agent_app.tools.skill_tool import skill_tool
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 

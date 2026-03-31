@@ -25,7 +25,6 @@ from agent_harness.core.config import (
     ToolConfig,
     TracingConfig,
 )
-from agent_harness.skills.loader import Skill, SkillLoader
 from agent_harness.core.event import Event, EventBus
 from agent_harness.core.errors import HarnessError
 from agent_harness.llm.base import BaseLLM
@@ -38,7 +37,7 @@ from agent_harness.agent.conversational import ConversationalAgent
 from agent_harness.context.context import AgentContext
 from agent_harness.session import BaseSession, SessionState, FileSession, InMemorySession
 
-__version__ = "0.3.5"
+__version__ = "0.4.0"
 
 __all__ = [
     # Logging
@@ -83,9 +82,6 @@ __all__ = [
     "ConversationalAgent",
     # Context
     "AgentContext",
-    # Skills
-    "Skill",
-    "SkillLoader",
     # Session
     "BaseSession",
     "SessionState",

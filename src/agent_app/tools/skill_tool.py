@@ -6,8 +6,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from agent_app.skills.loader import Skill, SkillLoader
 from agent_harness.core.config import HarnessConfig
-from agent_harness.skills.loader import Skill, SkillLoader
 from agent_harness.tool.base import BaseTool, ToolSchema
 
 _DESCRIPTION_TEMPLATE = """\
