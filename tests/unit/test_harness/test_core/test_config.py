@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from agent_harness.core.config import (
+    ApprovalConfig,
     HarnessConfig,
     LLMConfig,
     MemoryConfig,
@@ -246,3 +247,25 @@ class TestPaperConfig:
     def test_in_harness(self) -> None:
         cfg = HarnessConfig()
         assert isinstance(cfg.paper, PaperConfig)
+
+
+class TestApprovalConfigValidation:
+    def test_valid_tool_level(self) -> None:
+        cfg = ApprovalConfig(always_allow=["read_file", "list_dir"])
+        assert len(cfg.always_allow) == 2
+
+    def test_valid_resource_level(self) -> None:
+        cfg = ApprovalConfig(
+            always_allow=["terminal_tool(git *)", "web_fetch(domain:github.com)"],
+            always_deny=["write_file(**/.env*)"],
+        )
+        assert len(cfg.always_allow) == 2
+        assert len(cfg.always_deny) == 1
+
+    def test_invalid_rule_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid"):
+            ApprovalConfig(always_allow=["not valid!"])
+
+    def test_empty_rule_raises(self) -> None:
+        with pytest.raises(ValueError, match="Empty"):
+            ApprovalConfig(always_deny=[""])

@@ -70,7 +70,7 @@ def _list_dir_impl(resolved: Path, workspace: Path) -> str:
     return header + "\n" + "\n".join(lines)
 
 
-@tool(description=LIST_DIR_DESCRIPTION)
+@tool(description=LIST_DIR_DESCRIPTION, approval_resource_key="path")
 async def list_dir(path: str = ".") -> str:
     """List directory contents.
 

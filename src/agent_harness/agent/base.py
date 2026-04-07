@@ -21,6 +21,7 @@ from agent_harness.approval import (
     resolve_approval,
     resolve_approval_handler,
 )
+from agent_harness.approval.rules import extract_resource
 from agent_harness.context.context import AgentContext
 from agent_harness.context.state import AgentState
 from agent_harness.core.config import HarnessConfig
@@ -524,7 +525,24 @@ class BaseAgent(ABC, EventEmitter):
                 approved.append(tc)
                 continue
 
-            action = self._approval.check(tc)
+            # Resource extraction
+            tool_obj = (
+                self.tool_executor.registry.get(tc.name)
+                if self.tool_executor.registry.has(tc.name)
+                else None
+            )
+            resource_key = tool_obj.approval_resource_key if tool_obj else None
+            default_val: str | None = None
+            if tool_obj and resource_key:
+                props = tool_obj.get_schema().parameters.get("properties", {})
+                prop = props.get(resource_key, {})
+                if "default" in prop:
+                    default_val = str(prop["default"])
+            resource, kind = extract_resource(
+                tc.name, tc.arguments, resource_key, default=default_val,
+            )
+
+            action = self._approval.check(tc, resource=resource, kind=kind)
 
             if action == ApprovalAction.EXECUTE:
                 await self.hooks.on_tool_call(self.name, tc)
@@ -548,7 +566,10 @@ class BaseAgent(ABC, EventEmitter):
 
             else:  # ApprovalAction.ASK
                 assert self._approval_handler is not None
-                request = ApprovalRequest(tool_call=tc, agent_name=self.name)
+                request = ApprovalRequest(
+                    tool_call=tc, agent_name=self.name,
+                    resource=resource, resource_kind=kind,
+                )
                 await self.hooks.on_approval_request(self.name, request)
 
                 try:
@@ -568,7 +589,9 @@ class BaseAgent(ABC, EventEmitter):
                     await self.hooks.on_tool_call(self.name, tc)
                     approved.append(tc)
                 elif result.decision == ApprovalDecision.ALLOW_SESSION:
-                    self._approval.grant_session(tc.name)
+                    self._approval.grant_session(
+                        tc.name, resource=resource, kind=kind,
+                    )
                     await self.hooks.on_tool_call(self.name, tc)
                     approved.append(tc)
                 else:

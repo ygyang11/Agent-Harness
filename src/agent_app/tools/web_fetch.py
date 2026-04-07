@@ -121,7 +121,7 @@ def _format_response(body: str, content_type: str) -> str:
     return body
 
 
-@tool
+@tool(approval_resource_key="url")
 async def web_fetch(url: str, timeout: int = 30) -> str:
     """Fetch content from a URL and return readable text.
 

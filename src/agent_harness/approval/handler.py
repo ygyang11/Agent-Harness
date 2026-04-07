@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from abc import ABC, abstractmethod
 from typing import Any
@@ -42,7 +43,8 @@ class StdinApprovalHandler(ApprovalHandler):
         self._output.write(
             f"{yellow}{marker}{reset} {lock} {bold}{tc.name}{reset}({args_preview})\n"
         )
-        self._output.write("  Allow? [Y]es / [A]lways / [N]o <reason> (default: Y): ")
+        label = self._always_label(request)
+        self._output.write(f"  Allow? [Y]es / {label} / [N]o <reason> (default: Y): ")
         self._output.flush()
 
         loop = asyncio.get_running_loop()
@@ -64,3 +66,31 @@ class StdinApprovalHandler(ApprovalHandler):
         return ApprovalResult(
             tool_call_id=tc.id, tool_name=tc.name, decision=decision, reason=reason,
         )
+
+    def _always_label(self, request: ApprovalRequest) -> str:
+        """Build context-aware label for the Always option."""
+        from agent_harness.approval.policy import (  # noqa: PLC0415
+            _CHAIN_RE,
+            derive_session_prefix,
+        )
+
+        tc = request.tool_call
+        r, k = request.resource, request.resource_kind
+        if r is None or k is None:
+            return f"[A]lways allow {tc.name} this session"
+
+        if k == "command":
+            segments = [s.strip() for s in _CHAIN_RE.split(r) if s.strip()]
+            prefixes = sorted({derive_session_prefix(s, k) for s in segments}) if segments else [derive_session_prefix(r, k)]
+            label = ", ".join(f"'{p}'" for p in prefixes)
+            return f"[A]lways allow {label} commands this session"
+
+        prefix = derive_session_prefix(r, k)
+        if k == "url":
+            return f"[A]lways allow requests to '{prefix}' this session"
+        if k == "path":
+            parent = os.path.dirname(os.path.normpath(r))
+            if parent:
+                return f"[A]lways allow {tc.name} under '{prefix}/' this session"
+            return f"[A]lways allow {tc.name} on '{prefix}' this session"
+        return f"[A]lways allow {tc.name} this session"

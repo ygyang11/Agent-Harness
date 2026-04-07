@@ -24,7 +24,7 @@ WRITE_FILE_DESCRIPTION = (
 )
 
 
-@tool(description=WRITE_FILE_DESCRIPTION)
+@tool(description=WRITE_FILE_DESCRIPTION, approval_resource_key="file_path")
 async def write_file(file_path: str, content: str) -> str:
     """Create a new file.
 

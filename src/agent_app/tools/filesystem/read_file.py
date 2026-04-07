@@ -22,10 +22,10 @@ READ_FILE_DESCRIPTION = (
     "- Assume this tool is able to read all files. If the user provides a path, "
     "assume that path is valid. It is okay to read a file that does not exist; "
     "an error will be returned\n"
-    "- By default, reads up to 2000 lines from the beginning of the file\n"
-    "- For large files and codebase exploration, use pagination with offset and limit: "
-    "read_file(path, limit=100) to see file structure, "
-    "then read_file(path, offset=100, limit=200) for the next section\n"
+    "- By default, reads up to 200 lines from the beginning of the file\n"
+    "- For large files, use pagination with offset and limit: "
+    "read_file(path, offset=200, limit=200) to read the next section\n"
+    "- Read only what you need — avoid reading entire large files at once\n"
     "- Results are returned in cat -n format (line_number + tab + content) "
     "with a header showing total lines and position\n"
     "- You should ALWAYS read a file before editing it\n"
@@ -103,7 +103,7 @@ def _read_file_streaming(path: Path, offset: int, limit: int) -> str:
     return f"{header}\n{result}"
 
 
-@tool(description=READ_FILE_DESCRIPTION)
+@tool(description=READ_FILE_DESCRIPTION, approval_resource_key="file_path")
 async def read_file(file_path: str, offset: int = 0, limit: int = 2000) -> str:
     """Read file contents with line numbers.
 

@@ -30,6 +30,8 @@ class ApprovalRequest(BaseModel):
     tool_call: ToolCall
     agent_name: str
     step: int | None = None
+    resource: str | None = None
+    resource_kind: str | None = None
 
 
 class ApprovalResult(BaseModel):

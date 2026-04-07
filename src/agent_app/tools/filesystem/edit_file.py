@@ -50,7 +50,7 @@ def _generate_diff(old: str, new: str, filename: str) -> str:
     return "\n".join(diff)
 
 
-@tool(description=EDIT_FILE_DESCRIPTION)
+@tool(description=EDIT_FILE_DESCRIPTION, approval_resource_key="file_path")
 async def edit_file(
     file_path: str,
     old_string: str,

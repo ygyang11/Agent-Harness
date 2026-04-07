@@ -74,10 +74,12 @@ class BaseTool(ABC):
         description: str,
         *,
         executor_timeout: float | None = None,
+        approval_resource_key: str | None = None,
     ) -> None:
         self.name = name
         self.description = description
         self.executor_timeout = executor_timeout
+        self.approval_resource_key = approval_resource_key
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> str:

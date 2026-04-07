@@ -371,7 +371,7 @@ async def _download_paddleocr_markdown(json_url: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@tool
+@tool(approval_resource_key="url")
 async def pdf_parser(url: str) -> str:
     """Extract text from a PDF document at the given URL.
 

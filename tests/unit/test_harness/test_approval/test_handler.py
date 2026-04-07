@@ -62,3 +62,49 @@ class TestStdinApprovalHandler:
         assert "web_search" in written
         assert "query" in written
         assert "Allow?" in written
+
+    def test_always_label_command(self) -> None:
+        handler = StdinApprovalHandler(output=io.StringIO(), color=False)
+        tc = ToolCall(name="terminal_tool", arguments={"command": "git status"})
+        request = ApprovalRequest(
+            tool_call=tc, agent_name="agent", resource="git status", resource_kind="command",
+        )
+        label = handler._always_label(request)
+        assert "'git'" in label
+        assert "commands" in label
+
+    def test_always_label_path_dir(self) -> None:
+        handler = StdinApprovalHandler(output=io.StringIO(), color=False)
+        tc = ToolCall(name="write_file", arguments={"file_path": "src/main.py"})
+        request = ApprovalRequest(
+            tool_call=tc, agent_name="agent", resource="src/main.py", resource_kind="path",
+        )
+        label = handler._always_label(request)
+        assert "src" in label
+        assert "under" in label
+
+    def test_always_label_path_root_file(self) -> None:
+        handler = StdinApprovalHandler(output=io.StringIO(), color=False)
+        tc = ToolCall(name="read_file", arguments={"file_path": "README.md"})
+        request = ApprovalRequest(
+            tool_call=tc, agent_name="agent", resource="README.md", resource_kind="path",
+        )
+        label = handler._always_label(request)
+        assert "README.md" in label
+        assert "on" in label  # "on" not "under" for root files
+
+    def test_always_label_url(self) -> None:
+        handler = StdinApprovalHandler(output=io.StringIO(), color=False)
+        tc = ToolCall(name="web_fetch", arguments={"url": "https://github.com/x"})
+        request = ApprovalRequest(
+            tool_call=tc, agent_name="agent", resource="https://github.com/x", resource_kind="url",
+        )
+        label = handler._always_label(request)
+        assert "github.com" in label
+
+    def test_always_label_no_resource(self) -> None:
+        handler = StdinApprovalHandler(output=io.StringIO(), color=False)
+        tc = ToolCall(name="my_tool", arguments={})
+        request = ApprovalRequest(tool_call=tc, agent_name="agent")
+        label = handler._always_label(request)
+        assert "my_tool" in label

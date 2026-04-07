@@ -95,7 +95,7 @@ def _search_file_streaming(
     return len(matched_line_nums), result_lines
 
 
-@tool(description=GREP_FILES_DESCRIPTION)
+@tool(description=GREP_FILES_DESCRIPTION, approval_resource_key="path")
 async def grep_files(
     pattern: str,
     path: str = ".",

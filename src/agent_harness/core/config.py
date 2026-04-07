@@ -197,6 +197,14 @@ class ApprovalConfig(BaseModel):
     always_allow: list[str] = Field(default_factory=list)
     always_deny: list[str] = Field(default_factory=list)
 
+    @field_validator("always_allow", "always_deny")
+    @classmethod
+    def _validate_rules(cls, v: list[str]) -> list[str]:
+        from agent_harness.approval.rules import parse_rules  # noqa: PLC0415
+
+        parse_rules(v)
+        return v
+
 
 class HarnessConfig(BaseModel):
     """Root configuration for the agent_harness framework."""

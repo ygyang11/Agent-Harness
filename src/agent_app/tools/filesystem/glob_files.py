@@ -26,7 +26,7 @@ GLOB_FILES_DESCRIPTION = (
 )
 
 
-@tool(description=GLOB_FILES_DESCRIPTION)
+@tool(description=GLOB_FILES_DESCRIPTION, approval_resource_key="path")
 async def glob_files(pattern: str, path: str = ".") -> str:
     """Find files matching a glob pattern.
 
@@ -34,6 +34,9 @@ async def glob_files(pattern: str, path: str = ".") -> str:
         pattern: Glob pattern (e.g. "**/*.py", "src/**/*.ts", "*.md").
         path: Base directory for the search (default: workspace root).
     """
+    if ".." in pattern:
+        return "Error: glob pattern must not contain '..'"
+
     try:
         base = normalize_path(path, must_exist=True)
     except ValueError as exc:

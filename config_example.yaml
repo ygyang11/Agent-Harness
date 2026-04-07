@@ -61,24 +61,36 @@ skill:
   dirs:                           # Skill directories to scan (must end with "skills")
     - "skills"                    # Project root skills/ (default)
     # - "/path/to/shared/skills"  # Team-shared skills
-    # - "~/.agent-harness/skills"      # Personal skills
+    # - "~/.agent-harness/skills" # Personal skills
 
 # --- Approval (Human-in-the-Loop) ---
 approval:
   mode: "auto"                  # "never" — no approval prompts
                                 # "auto"  — ask for tools not in always_allow (recommended)
                                 # "always" — ask for every tool call
-  always_allow:                 # Tool names that skip approval (auto/always modes)
-    - "read_file"
+  always_allow:                 # Rules: "tool_name" (tool-level) or "tool_name(pattern)" (resource-level)
+    # Tool-level: all invocations auto-allowed
     - "list_dir"
     - "glob_files"
     - "grep_files"
     - "web_search"
-    - "web_fetch"
-    # terminal_tool not listed — each execution requires user confirmation
-    # To auto-allow: add "terminal_tool" (NOT recommended for untrusted environments)
-  always_deny:                  # Tool names that are always blocked
-    # - "terminal_tool"         # Uncomment to fully block terminal access
+    # Resource-level: only matching resources auto-allowed
+    - "read_file(src/**)"               # Read files under src/
+    - "read_file(tests/**)"             # Read files under tests/
+    - "terminal_tool(git *)"            # Git commands
+    - "terminal_tool(pytest *)"         # Test commands
+    - "terminal_tool(ruff *)"           # Linting
+    - "terminal_tool(mypy *)"           # Type checking
+    - "web_fetch(domain:docs.python.org)"  # Python docs
+    - "web_fetch(domain:github.com)"       # GitHub
+    - "web_fetch(domain:*.readthedocs.io)" # ReadTheDocs
+
+  always_deny:                  # Rules that are always blocked (deny > allow)
+    - "terminal_tool(rm -rf *)"         # Destructive removal
+    - "terminal_tool(chmod 777 *)"      # Dangerous permissions
+    - "write_file(**/.env*)"            # Secrets files (any depth)
+    - "edit_file(**/.env*)"
+    # - "terminal_tool"                 # Uncomment to fully block terminal access
 
 # --- Tracing & Observability ---
 tracing:

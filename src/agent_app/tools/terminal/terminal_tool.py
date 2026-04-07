@@ -100,7 +100,11 @@ async def _execute_command(
     return proc.returncode, output
 
 
-@tool(description=TERMINAL_TOOL_DESCRIPTION, executor_timeout=_MAX_TIMEOUT + 10)
+@tool(
+    description=TERMINAL_TOOL_DESCRIPTION,
+    executor_timeout=_MAX_TIMEOUT + 10,
+    approval_resource_key="command",
+)
 async def terminal_tool(command: str, timeout: int = _DEFAULT_TIMEOUT) -> str:
     """Execute a shell command in a bash subprocess.
 
