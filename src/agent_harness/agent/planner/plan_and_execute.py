@@ -111,6 +111,7 @@ class PlanAndExecuteAgent(BaseAgent):
                 context=self.context.fork("planner"),
                 hooks=self.hooks,
                 max_steps=1,
+                prompt_builder=self._prompt_builder.fork(),
             )
             executor = ExecutorAgent(
                 name=f"{self.name}.executor",
@@ -121,6 +122,7 @@ class PlanAndExecuteAgent(BaseAgent):
                 max_steps=self._executor_max_steps,
                 approval=self._executor_approval,
                 approval_handler=self._executor_approval_handler,
+                prompt_builder=self._prompt_builder.fork(),
             )
             replanner = ReplannerAgent(
                 name=f"{self.name}.replanner",
@@ -129,6 +131,7 @@ class PlanAndExecuteAgent(BaseAgent):
                 context=self.context.fork("replanner"),
                 hooks=self.hooks,
                 max_steps=1,
+                prompt_builder=self._prompt_builder.fork(),
             )
 
             plan_result = await planner.run(input_text)

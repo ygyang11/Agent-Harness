@@ -1,33 +1,20 @@
 """ReAct agent: Reasoning + Acting loop."""
+
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from agent_harness.agent.base import BaseAgent, StepResult
-from agent_harness.llm.types import FinishReason
 
 logger = logging.getLogger(__name__)
-
-REACT_PROMPTS: dict[str, str] = {
-    "system.default": """You are a helpful AI assistant with access to tools.
-
-When you need information or need to take action, use the available tools.
-Think step by step about what you need to do, then take action.
-When you have enough information to answer the user's question, provide a final response.
-
-Important:
-- Use tools when you need external information or capabilities
-- You can call multiple tools at once if they are independent
-- After receiving tool results, analyze them before deciding next steps
-- Provide a clear, comprehensive final answer when ready""",
-}
 
 
 class ReActAgent(BaseAgent):
     """ReAct agent implementing the Reasoning + Acting paradigm.
 
     Execution loop:
-    1. THINK: LLM reasons about the current state and decides what to d
+    1. THINK: LLM reasons about the current state and decides what to do
     2. ACT: If LLM calls tools, execute them
     3. OBSERVE: Feed tool results back to LLM
     4. Repeat until LLM provides a final answer (no tool calls)
@@ -35,7 +22,7 @@ class ReActAgent(BaseAgent):
     Supports:
     - Parallel tool calls (when LLM returns multiple tool_calls)
     - Automatic thought chain tracking
-    - Configurable system prompt
+    - Configurable system prompt (uses DEFAULT_INTRO when not provided)
     - Force tool usage via tool_choice
 
     Example:
@@ -47,10 +34,8 @@ class ReActAgent(BaseAgent):
         result = await agent.run("What is the population of France?")
     """
 
-    def __init__(self, system_prompt: str | None = None, **kwargs):
-        if system_prompt is None:
-            system_prompt = REACT_PROMPTS["system.default"]
-        super().__init__(system_prompt=system_prompt, **kwargs)
+    def __init__(self, system_prompt: str | None = None, **kwargs: Any) -> None:
+        super().__init__(system_prompt=system_prompt or "", **kwargs)
 
     async def step(self) -> StepResult:
         """Execute one ReAct cycle: Think -> (Act -> Observe)? -> Response?"""

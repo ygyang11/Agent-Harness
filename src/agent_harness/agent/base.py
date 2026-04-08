@@ -1,4 +1,5 @@
 """Base agent class for agent_harness."""
+
 from __future__ import annotations
 
 import logging
@@ -7,6 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from agent_harness.prompt.system_builder import SystemPromptBuilder
     from agent_harness.session.base import BaseSession
 
 from pydantic import BaseModel, Field
@@ -38,89 +40,10 @@ from agent_harness.tool.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-BASE_PROMPTS: dict[str, str] = {
-    "skill_supplement": """
-
-## Skills
-
-You have access to a `skill_tool` that loads domain-specific instructions for specialized tasks.
-
-Before responding directly to the user, check if the request matches an available skill in the \
-tool's catalog.
-If a match exists, load the skill first — its instructions provide more thorough and structured \
-guidance than your default behavior.
-
-Rules:
-- Do not skip a matching skill because you believe you can handle the task without it
-- After loading a skill, follow its instructions to complete the task
-- If no skill matches, proceed normally with your available tools and knowledge""",
-
-    "filesystem_supplement": """
-
-## File Operations
-
-You have access to dedicated filesystem tools for reading, writing, editing, and searching files.
-
-### Following Conventions
-- Read files before editing — understand existing content before making changes
-- Mimic existing style, naming conventions, and patterns in the codebase
-- Use list_dir, glob_files, or grep_files to locate files before reading them
-- Use pagination (offset/limit) when reading large files
-- It is better to speculatively read multiple files as a batch when exploring
-
-### Prefer Dedicated Tools
-When a dedicated filesystem tool can do the job, use it instead of terminal_tool:
-- read_file instead of cat/head/tail
-- list_dir instead of ls
-- glob_files instead of find
-- grep_files instead of grep/rg
-- write_file/edit_file instead of echo/sed/awk
-These tools provide structured output optimized for your context window.
-Reserve terminal_tool for commands that have no dedicated tool equivalent.""",
-
-    "terminal_supplement": """
-
-## Terminal Commands
-
-You have access to a terminal_tool for running shell commands in a bash subprocess.
-
-### When to Use
-Use terminal_tool for operations without a dedicated tool:
-- Version control: git add, git commit, git push, git diff, git log
-- Testing: pytest, npm test, cargo test
-- Package management: pip install, npm install, cargo build
-- Build tools: make, cmake, gradle
-- Run scripts: python script.py, node app.js, bash setup.sh, ./run.sh
-- System commands: docker, kubectl, curl, wget
-
-When dedicated tools exist for an operation (e.g. file reading, searching),
-prefer those over terminal_tool — they provide structured output optimized
-for your context window.
-
-### Command Execution
-- Each call spawns a fresh bash subprocess — shell state (variables, cwd, aliases) \
-does not persist between calls
-- Commands always start from the workspace root directory
-- To run in a subdirectory, chain with cd: 'cd src && pytest'
-- Always quote file paths containing spaces with double quotes
-- If a command creates files or directories, verify the parent directory exists first
-
-### Multiple Commands
-- Use && to chain dependent commands (second runs only if first succeeds)
-- Use ; to chain independent commands (runs regardless of previous exit code)
-- For independent operations, prefer making separate terminal_tool calls over long chains
-
-### Git Safety
-- Never skip hooks (--no-verify) unless explicitly asked
-- Never force push or reset --hard without explicit user permission
-- Prefer creating new commits over amending existing ones
-- Always check git status before committing
-- Before running destructive operations, consider whether there is a safer alternative""",
-}
-
 
 class StepResult(BaseModel):
     """Result of a single agent step."""
+
     thought: str | None = None
     action: list[ToolCall] | None = None
     observation: list[ToolResult] | None = None
@@ -129,6 +52,7 @@ class StepResult(BaseModel):
 
 class AgentResult(BaseModel):
     """Final result of an agent run."""
+
     output: str
     messages: list[Message] = Field(default_factory=list)
     steps: list[StepResult] = Field(default_factory=list)
@@ -173,7 +97,11 @@ class BaseAgent(ABC, EventEmitter):
         config: HarnessConfig | None = None,
         approval: ApprovalPolicy | None = None,
         approval_handler: ApprovalHandler | None = None,
+        prompt_builder: SystemPromptBuilder | None = None,
     ) -> None:
+        from agent_harness.prompt.runtime_context import RuntimeContextProvider
+        from agent_harness.prompt.sections import create_default_builder, make_intro_section
+
         self.name = name
         if context is not None:
             self.context = context
@@ -182,13 +110,6 @@ class BaseAgent(ABC, EventEmitter):
         self.llm = llm or create_llm(self.context.config)
         self.hooks = resolve_hooks(hooks, self.context.config)
         self.max_steps = max_steps
-        if tools and self._has_skill_tool(tools):
-            system_prompt = system_prompt + BASE_PROMPTS["skill_supplement"]
-        if tools and self._has_filesystem_tools(tools):
-            system_prompt = system_prompt + BASE_PROMPTS["filesystem_supplement"]
-        if tools and self._has_terminal_tool(tools):
-            system_prompt = system_prompt + BASE_PROMPTS["terminal_supplement"]
-        self.system_prompt = system_prompt
         self.use_long_term_memory = use_long_term_memory
         self._stream = stream
         self._total_usage = Usage()
@@ -197,19 +118,29 @@ class BaseAgent(ABC, EventEmitter):
         # Approval setup
         self._approval = resolve_approval(approval, self.context.config)
         self._approval_handler: ApprovalHandler | None = (
-            resolve_approval_handler(approval_handler)
-            if self._approval is not None
-            else None
+            resolve_approval_handler(approval_handler) if self._approval is not None else None
         )
 
         # Set up tool registry and executor
         self.tool_registry = ToolRegistry()
-        for t in (tools or []):
+        for t in tools or []:
             self.tool_registry.register(t)
         self.tool_executor = ToolExecutor(
             self.tool_registry,
             config=self.context.config,
         )
+
+        # System prompt builder
+        if prompt_builder is not None:
+            self._prompt_builder = prompt_builder
+            if system_prompt:
+                self._prompt_builder.register(make_intro_section(system_prompt))
+        else:
+            self._prompt_builder = create_default_builder(system_prompt)
+        self.system_prompt = self._prompt_builder.build(self._make_builder_context())
+
+        # Runtime context provider (ephemeral layer)
+        self._runtime_ctx = RuntimeContextProvider()
 
         # Wire event bus
         self.set_event_bus(self.context.event_bus)
@@ -241,21 +172,21 @@ class BaseAgent(ABC, EventEmitter):
         self.context.short_term_memory.compressor = compressor
         self.context._compressor = compressor
 
-    @staticmethod
-    def _has_skill_tool(tools: list[BaseTool]) -> bool:
-        return any(t.name == "skill_tool" for t in tools)
+    def _make_builder_context(self) -> dict[str, Any]:
+        """Prepare context dict for SystemPromptBuilder.build()."""
+        from pathlib import Path
 
-    @staticmethod
-    def _has_filesystem_tools(tools: list[BaseTool]) -> bool:
-        _FS_TOOL_NAMES = {
-            "read_file", "write_file", "edit_file",
-            "list_dir", "glob_files", "grep_files",
+        skill_loader = None
+        for tool in self.tools:
+            if tool.name == "skill_tool" and hasattr(tool, "loader"):
+                skill_loader = tool.loader
+                break
+        return {
+            "tools": self.tools,
+            "config": self.context.config,
+            "cwd": str(Path.cwd()),
+            "skill_loader": skill_loader,
         }
-        return any(t.name in _FS_TOOL_NAMES for t in tools)
-
-    @staticmethod
-    def _has_terminal_tool(tools: list[BaseTool]) -> bool:
-        return any(t.name == "terminal_tool" for t in tools)
 
     @property
     def tools(self) -> list[BaseTool]:
@@ -304,19 +235,14 @@ class BaseAgent(ABC, EventEmitter):
 
         # Propagate session_id to compressor for archive binding
         if resolved_session and self.context.short_term_memory.compressor:
-            self.context.short_term_memory.compressor.bind_session(
-                resolved_session.session_id
-            )
+            self.context.short_term_memory.compressor.bind_session(resolved_session.session_id)
 
         # Reset state for agent reuse (e.g., team orchestration, pipelines)
         if self.context.state.is_terminal:
             self.context.state.reset()
 
         # Session restore: only when context is empty (first call or cross-process)
-        if (
-            resolved_session
-            and not await self.context.short_term_memory.get_context_messages()
-        ):
+        if resolved_session and not await self.context.short_term_memory.get_context_messages():
             state = await resolved_session.load_state()
             if state:
                 await self.context.restore_from_state(state, self.system_prompt)
@@ -335,9 +261,7 @@ class BaseAgent(ABC, EventEmitter):
 
         # Initialize context
         if await self._should_inject_system_prompt():
-            await self.context.short_term_memory.add_message(
-                Message.system(self.system_prompt)
-            )
+            await self.context.short_term_memory.add_message(Message.system(self.system_prompt))
         await self.context.short_term_memory.add_message(input_msg)
         self.context.state.transition(AgentState.THINKING)
 
@@ -366,9 +290,7 @@ class BaseAgent(ABC, EventEmitter):
             else:
                 # max_steps exceeded
                 self.context.state.transition(AgentState.ERROR)
-                raise MaxStepsExceededError(
-                    f"Agent '{self.name}' exceeded {self.max_steps} steps"
-                )
+                raise MaxStepsExceededError(f"Agent '{self.name}' exceeded {self.max_steps} steps")
 
         except Exception as e:
             await self.hooks.on_error(self.name, e)
@@ -382,7 +304,8 @@ class BaseAgent(ABC, EventEmitter):
             if resolved_session:
                 now = datetime.now()
                 ss = self.context.to_session_state(
-                    resolved_session.session_id, agent_name=self.name,
+                    resolved_session.session_id,
+                    agent_name=self.name,
                 )
                 ss.created_at = self._session_created_at or now
                 ss.updated_at = now
@@ -472,11 +395,18 @@ class BaseAgent(ABC, EventEmitter):
         ):
             await self.hooks.on_compression_start(self.name)
 
+        # Build runtime context (ephemeral, not persisted)
+        extra_sys: list[Message] | None = None
+        runtime_msg = self._runtime_ctx.build_context_message()
+        if runtime_msg:
+            extra_sys = [runtime_msg]
+
         messages = await self.context.build_llm_messages(
             base_messages=messages,
             include_working=True,
             include_long_term=use_long_term,
             long_term_query=long_term_query,
+            extra_system_messages=extra_sys,
         )
 
         # Notify after compression (if it happened)
@@ -498,11 +428,15 @@ class BaseAgent(ABC, EventEmitter):
             self.context.state.transition(AgentState.THINKING)
 
         if self._stream:
+
             async def _on_delta(delta: StreamDelta) -> None:
                 await self.hooks.on_llm_stream_delta(self.name, delta)
 
             response = await self.llm.stream_with_events(
-                messages, tools=tools, on_delta=_on_delta, **kwargs,
+                messages,
+                tools=tools,
+                on_delta=_on_delta,
+                **kwargs,
             )
         else:
             response = await self.llm.generate_with_events(messages, tools=tools, **kwargs)
@@ -539,7 +473,10 @@ class BaseAgent(ABC, EventEmitter):
                 if "default" in prop:
                     default_val = str(prop["default"])
             resource, kind = extract_resource(
-                tc.name, tc.arguments, resource_key, default=default_val,
+                tc.name,
+                tc.arguments,
+                resource_key,
+                default=default_val,
             )
 
             action = self._approval.check(tc, resource=resource, kind=kind)
@@ -558,17 +495,21 @@ class BaseAgent(ABC, EventEmitter):
                         reason="Not allowed by policy.",
                     ),
                 )
-                denied_results.append(ToolResult(
-                    tool_call_id=tc.id,
-                    content=f"Tool '{tc.name}' is not allowed by policy.",
-                    is_error=True,
-                ))
+                denied_results.append(
+                    ToolResult(
+                        tool_call_id=tc.id,
+                        content=f"Tool '{tc.name}' is not allowed by policy.",
+                        is_error=True,
+                    )
+                )
 
             else:  # ApprovalAction.ASK
                 assert self._approval_handler is not None
                 request = ApprovalRequest(
-                    tool_call=tc, agent_name=self.name,
-                    resource=resource, resource_kind=kind,
+                    tool_call=tc,
+                    agent_name=self.name,
+                    resource=resource,
+                    resource_kind=kind,
                 )
                 await self.hooks.on_approval_request(self.name, request)
 
@@ -590,17 +531,21 @@ class BaseAgent(ABC, EventEmitter):
                     approved.append(tc)
                 elif result.decision == ApprovalDecision.ALLOW_SESSION:
                     self._approval.grant_session(
-                        tc.name, resource=resource, kind=kind,
+                        tc.name,
+                        resource=resource,
+                        kind=kind,
                     )
                     await self.hooks.on_tool_call(self.name, tc)
                     approved.append(tc)
                 else:
                     reason = result.reason or "Denied by user."
-                    denied_results.append(ToolResult(
-                        tool_call_id=tc.id,
-                        content=f"Tool '{tc.name}' was denied: {reason}",
-                        is_error=True,
-                    ))
+                    denied_results.append(
+                        ToolResult(
+                            tool_call_id=tc.id,
+                            content=f"Tool '{tc.name}' was denied: {reason}",
+                            is_error=True,
+                        )
+                    )
 
         results: list[ToolResult] = []
         if approved:

@@ -6,10 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from agent_harness.core.config import HarnessConfig, SkillConfig
 from agent_app.tools import BUILTIN_TOOLS
 from agent_app.tools.skill_tool import SkillTool, skill_tool
-
+from agent_harness.core.config import HarnessConfig, SkillConfig
 from tests.unit.test_app.test_skills.conftest import _write_skill
 
 
@@ -44,16 +43,10 @@ class TestSkillToolRegistration:
 
 
 class TestSkillToolSchema:
-    def test_description_contains_catalog(
-        self,
-        skills_dir: Path,
-        restore_harness_config: None,
-    ) -> None:
-        HarnessConfig._instance = HarnessConfig(skill=SkillConfig(dirs=[str(skills_dir)]))
+    def test_description_is_slim(self) -> None:
         schema = skill_tool.get_schema()
-        assert "<available_skills>" in schema.description
-        assert "pdf" in schema.description
-        assert "frontend" in schema.description
+        assert "<available_skills>" not in schema.description
+        assert "Check the available skills" in schema.description
 
     def test_schema_parameters(
         self,
@@ -67,14 +60,14 @@ class TestSkillToolSchema:
         assert "args" in props
         assert "skill_name" in schema.parameters["required"]
 
-    def test_schema_with_empty_skills(
+    def test_loader_property(
         self,
-        empty_skills_dir: Path,
+        skills_dir: Path,
         restore_harness_config: None,
     ) -> None:
-        HarnessConfig._instance = HarnessConfig(skill=SkillConfig(dirs=[str(empty_skills_dir)]))
-        schema = skill_tool.get_schema()
-        assert "(no skills available)" in schema.description
+        HarnessConfig._instance = HarnessConfig(skill=SkillConfig(dirs=[str(skills_dir)]))
+        loader = skill_tool.loader
+        assert "pdf" in loader.list_names()
 
 
 class TestSkillToolExecution:
@@ -124,7 +117,7 @@ class TestSkillToolExecution:
 
 
 class TestSkillToolAutoRefresh:
-    async def test_schema_refresh_after_adding_skill_subdir(
+    async def test_loader_refresh_after_adding_skill_subdir(
         self,
         tmp_path: Path,
         restore_harness_config: None,
@@ -138,9 +131,9 @@ class TestSkillToolAutoRefresh:
             encoding="utf-8",
         )
         HarnessConfig._instance = HarnessConfig(skill=SkillConfig(dirs=[str(root)]))
-        schema_before = skill_tool.get_schema()
-        assert "first" in schema_before.description
-        assert "second" not in schema_before.description
+        loader_before = skill_tool.loader
+        assert "first" in loader_before.list_names()
+        assert "second" not in loader_before.list_names()
 
         second = root / "second"
         second.mkdir()
@@ -150,8 +143,8 @@ class TestSkillToolAutoRefresh:
         )
 
         skill_tool._state_key_checked_at = 0.0
-        schema_after = skill_tool.get_schema()
-        assert "second" in schema_after.description
+        loader_after = skill_tool.loader
+        assert "second" in loader_after.list_names()
 
     async def test_execute_refresh_after_adding_skill_subdir(
         self,
@@ -176,7 +169,7 @@ class TestSkillToolAutoRefresh:
 
 
 class TestSkillToolTTL:
-    async def test_schema_skips_stat_within_ttl(
+    async def test_loader_skips_stat_within_ttl(
         self,
         tmp_path: Path,
         restore_harness_config: None,
@@ -185,16 +178,16 @@ class TestSkillToolTTL:
         _write_skill(root, "alpha", "skill alpha", "body alpha")
         HarnessConfig._instance = HarnessConfig(skill=SkillConfig(dirs=[str(root)]))
 
-        schema1 = skill_tool.get_schema()
-        assert "- alpha:" in schema1.description
+        loader1 = skill_tool.loader
+        assert "alpha" in loader1.list_names()
 
         _write_skill(root, "bravo", "skill bravo", "body bravo")
-        schema2 = skill_tool.get_schema()
-        assert "- bravo:" not in schema2.description
+        loader2 = skill_tool.loader
+        assert "bravo" not in loader2.list_names()
 
         skill_tool._state_key_checked_at = 0.0
-        schema3 = skill_tool.get_schema()
-        assert "- bravo:" in schema3.description
+        loader3 = skill_tool.loader
+        assert "bravo" in loader3.list_names()
 
     async def test_execute_not_found_force_refreshes_loader(
         self,
@@ -213,8 +206,8 @@ class TestSkillToolTTL:
         result = await skill_tool.execute(skill_name="nonexistent")
         assert "not found" in result.lower()
 
-        schema = skill_tool.get_schema()
-        assert "ephemeral" not in schema.description
+        loader = skill_tool.loader
+        assert "ephemeral" not in loader.list_names()
 
 
 class TestSkillToolXmlEscape:

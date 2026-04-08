@@ -1,8 +1,8 @@
-"""Coding agent demo — a ReActAgent with filesystem + terminal tools.
+"""Coding agent demo — a ReActAgent with filesystem + terminal + web tools.
 
 Demonstrates: filesystem tools (read/write/edit/list/glob/grep),
-terminal tool (git, pytest, shell commands), tool selection,
-multi-step coding workflow, and prompt supplements.
+terminal tool (git, pytest, shell commands), web_search, web_fetch,
+tool selection, multi-step coding workflow, and SystemPromptBuilder.
 
 Usage:
     python examples/features/coding_demo.py          # auto mode (stream)
@@ -18,20 +18,19 @@ from unittest.mock import patch
 
 from agent_app.tools.filesystem import FILESYSTEM_TOOLS
 from agent_app.tools.terminal import terminal_tool
+from agent_app.tools.web_fetch import web_fetch
+from agent_app.tools.web_search import web_search
 from agent_harness import HarnessConfig, ReActAgent
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-ALL_TOOLS = [*FILESYSTEM_TOOLS, terminal_tool]
+ALL_TOOLS = [*FILESYSTEM_TOOLS, terminal_tool, web_search, web_fetch]
 
 SYSTEM_PROMPT = (
     "You are a skilled Python developer. "
-    "You have access to filesystem tools to explore, read, and modify code, "
-    "and a terminal tool to run shell commands (git, pytest, etc.). "
+    "You have access to filesystem tools, terminal tool, web_search, and web_fetch. "
     "Always explore the project structure first before making changes. "
-    "Read files before editing them. "
-    "Use dedicated filesystem tools for file operations, "
-    "and terminal_tool only for commands without a dedicated equivalent."
+    "Read files before editing them."
 )
 
 TASK = """\
@@ -40,7 +39,8 @@ You are working on a Python calculator project in the current workspace.
 Tasks:
 1. Explore the project structure to understand the codebase
 2. Read the source files and tests to understand the current state
-3. Find and fix the bug in calculator.py (hint: division by zero is not handled)
+3. Find and fix the bug in calculator.py (hint: division by zero is not handled). \
+Research the best practice for this if you're unsure about the right approach.
 4. Implement the TODO in formatter.py — it should format numbers nicely
 5. Read the modified files to verify your changes look correct
 6. Run the tests to verify your fixes pass
@@ -182,7 +182,7 @@ async def run_chat(config: HarnessConfig, workspace: Path) -> None:
     """Chat mode: interact with the coding agent."""
     print("=== Coding Agent Demo (interactive) ===")
     print(f"Workspace: {workspace}")
-    print("Tools: filesystem (read/write/edit/list/glob/grep) + terminal")
+    print("Tools: filesystem + terminal + web_search + web_fetch")
     print("Type 'exit' to quit.\n")
 
     agent = ReActAgent(
@@ -198,7 +198,7 @@ async def run_chat(config: HarnessConfig, workspace: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Coding agent demo with filesystem + terminal tools",
+        description="Coding agent demo with filesystem + terminal + web tools",
     )
     parser.add_argument("--chat", action="store_true", help="Interactive chat mode")
     return parser.parse_args()

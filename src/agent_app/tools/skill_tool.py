@@ -1,4 +1,5 @@
 """Skill tool — loads domain knowledge from SKILL.md files on demand."""
+
 from __future__ import annotations
 
 import html
@@ -10,21 +11,10 @@ from agent_app.skills.loader import Skill, SkillLoader
 from agent_harness.core.config import HarnessConfig
 from agent_harness.tool.base import BaseTool, ToolSchema
 
-_DESCRIPTION_TEMPLATE = """\
-Load a skill to get specialized instructions for the current task.
-
-<available_skills>
-{catalog}
-</available_skills>
-
-When to use:
-- A user request clearly matches a skill description listed above
-- You need domain-specific workflow guidance not in your training data
-
-Rules:
-- Use skill names exactly as listed above
-- After loading, follow the skill instructions to complete the task
-- Do not call this tool for skills that are already loaded in this conversation"""
+_DESCRIPTION = """\
+Load a skill by name to get specialized instructions for the current task. \
+Check the available skills listed above to find matching skills by name. \
+After loading, follow the skill instructions to complete the task."""
 
 
 def _format_resources(skill: Skill) -> str:
@@ -84,12 +74,15 @@ class SkillTool(BaseTool):
 
         return self._loader
 
+    @property
+    def loader(self) -> SkillLoader:
+        """Expose loader for SystemPromptBuilder skill catalog injection."""
+        return self._ensure_loader()
+
     def get_schema(self) -> ToolSchema:
-        loader = self._ensure_loader()
-        description = _DESCRIPTION_TEMPLATE.format(catalog=loader.get_catalog())
         return ToolSchema(
             name=self.name,
-            description=description,
+            description=_DESCRIPTION,
             parameters={
                 "type": "object",
                 "properties": {

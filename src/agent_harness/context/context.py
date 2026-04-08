@@ -1,4 +1,5 @@
 """Unified agent context container."""
+
 from __future__ import annotations
 
 import logging
@@ -10,8 +11,8 @@ from agent_harness.core.config import HarnessConfig
 from agent_harness.core.event import EventBus
 from agent_harness.core.message import Message, Role
 from agent_harness.memory.short_term import ShortTermMemory
-from agent_harness.utils.token_counter import count_messages_tokens
 from agent_harness.memory.working_term import WorkingMemory
+from agent_harness.utils.token_counter import count_messages_tokens
 
 if TYPE_CHECKING:
     from agent_harness.memory.compressor import ContextCompressor
@@ -125,9 +126,7 @@ class AgentContext:
             metadata=metadata,
         )
 
-    async def restore_from_state(
-        self, state: SessionState, system_prompt: str = ""
-    ) -> None:
+    async def restore_from_state(self, state: SessionState, system_prompt: str = "") -> None:
         from agent_harness.context.variables import Scope
 
         await self.short_term_memory.clear()
@@ -167,6 +166,7 @@ class AgentContext:
         include_long_term: bool = False,
         long_term_query: str | None = None,
         long_term_top_k: int = 3,
+        extra_system_messages: list[Message] | None = None,
     ) -> list[Message]:
         """Build the full message list for an LLM call.
 
@@ -180,6 +180,9 @@ class AgentContext:
             long_term_query: Query text for long-term retrieval. Falls back
                 to the last user message content.
             long_term_top_k: Max items to retrieve from long-term memory.
+            extra_system_messages: Additional system messages (e.g. runtime
+                context) to inject after the main system message. These
+                participate in the final token budget guard.
 
         Returns:
             Ordered list of messages ready for LLM consumption.
@@ -190,6 +193,11 @@ class AgentContext:
 
         # Determine injection point (after system message if present)
         inject_idx = 1 if messages and messages[0].role == Role.SYSTEM else 0
+
+        # Extra system messages (e.g. runtime context)
+        if extra_system_messages:
+            messages = messages[:inject_idx] + extra_system_messages + messages[inject_idx:]
+            inject_idx += len(extra_system_messages)
 
         # Working memory injection
         if include_working:
@@ -231,9 +239,7 @@ class AgentContext:
             non_system_groups = [g for g in groups if not g.is_system]
 
             system_msgs = [m for g in system_groups for m in g.messages]
-            budget = max_tokens - count_messages_tokens(
-                system_msgs, self.config.llm.model
-            )
+            budget = max_tokens - count_messages_tokens(system_msgs, self.config.llm.model)
             kept_groups: list[list[Message]] = []
             for group in reversed(non_system_groups):
                 cost = count_messages_tokens(group.messages, self.config.llm.model)
