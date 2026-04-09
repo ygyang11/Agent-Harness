@@ -6,7 +6,11 @@ Every tool exposes a JSON Schema description for LLM function calling.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agent_harness.core.message import Message
+    from agent_harness.hooks.base import DefaultHooks
 
 from pydantic import BaseModel, Field
 
@@ -100,6 +104,26 @@ class BaseTool(ABC):
         Override in subclasses or use @tool decorator for auto-generation.
         """
         return ToolSchema(name=self.name, description=self.description)
+
+    # ── Stateful tool protocol ──
+
+    def get_state(self) -> dict[str, Any] | None:
+        """Return intermediate state for session persistence.
+
+        Stateless tools return None (default). Stateful tools override
+        to return a serializable state dict.
+        """
+        return None
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore intermediate state from session data."""
+
+    async def notify_state(self, hooks: DefaultHooks, agent_name: str) -> None:
+        """Notify hooks after state change. Stateful tools override."""
+
+    def build_context_message(self) -> Message | None:
+        """Build ephemeral context for LLM injection. Stateful tools override."""
+        return None
 
     def __repr__(self) -> str:
         return f"<Tool {self.name}>"

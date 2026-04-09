@@ -18,13 +18,14 @@ from unittest.mock import patch
 
 from agent_app.tools.filesystem import FILESYSTEM_TOOLS
 from agent_app.tools.terminal import terminal_tool
+from agent_app.tools.todo_write import todo_write
 from agent_app.tools.web_fetch import web_fetch
 from agent_app.tools.web_search import web_search
 from agent_harness import HarnessConfig, ReActAgent
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-ALL_TOOLS = [*FILESYSTEM_TOOLS, terminal_tool, web_search, web_fetch]
+ALL_TOOLS = [*FILESYSTEM_TOOLS, terminal_tool, web_search, web_fetch, todo_write]
 
 SYSTEM_PROMPT = (
     "You are a skilled Python developer. "
@@ -36,16 +37,13 @@ SYSTEM_PROMPT = (
 TASK = """\
 You are working on a Python calculator project in the current workspace.
 
-Tasks:
-1. Explore the project structure to understand the codebase
-2. Read the source files and tests to understand the current state
-3. Find and fix the bug in calculator.py (hint: division by zero is not handled). \
-Research the best practice for this if you're unsure about the right approach.
-4. Implement the TODO in formatter.py — it should format numbers nicely
-5. Read the modified files to verify your changes look correct
-6. Run the tests to verify your fixes pass
+There are two known issues:
+- Division by zero is not handled in calculator.py — it will crash. \
+Research the best practice for handling this if you're unsure.
+- `format_result` in formatter.py is not implemented — it should \
+format calculation results nicely (e.g. '2 + 3 = 5').
 
-Start by exploring the project structure.
+Fix both issues and make sure everything works..
 """
 
 

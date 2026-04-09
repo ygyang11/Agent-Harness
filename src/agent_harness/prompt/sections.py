@@ -70,6 +70,8 @@ When a dedicated filesystem tool can do the job, use it instead of terminal_tool
 - write_file/edit_file instead of echo/sed/awk
 These tools provide structured output optimized for your context window.
 Reserve terminal_tool for commands that have no dedicated tool equivalent.""",
+
+
     "terminal": """\
 ## Terminal Commands
 
@@ -107,6 +109,61 @@ does not persist between calls
 - Prefer creating new commits over amending existing ones
 - Always check git status before committing
 - Before running destructive operations, consider whether there is a safer alternative""",
+
+
+    "todo": """\
+## Task Management
+
+You have a `todo_write` tool to plan and track multi-step work. \
+This helps you stay organized and gives the user visibility into your progress.
+
+### When to Use
+- Complex tasks requiring 3 or more distinct steps
+- After receiving a complex request, before starting execution
+- When the user provides multiple tasks (numbered or comma-separated)
+- To track progress across multi-file changes or multi-tool workflows
+
+### When NOT to Use
+- Single, straightforward tasks completable in 1-2 steps
+- Purely conversational or informational requests
+- Trivial operations (adding a comment, running one command)
+If the task is simple, just do it directly — do not create a todo list.
+
+### How It Works
+- Submit the **complete** task list every time — all tasks, not just changes
+- When creating a task list, mark the first task as `in_progress` immediately
+- At most **1 task** can be `in_progress` at a time
+- Work on one task at a time — when a task is done, call todo_write to update \
+status before starting the next
+- Do not batch multiple task completions in a single update
+- Don't be afraid to revise the list as you go — new information may reveal \
+tasks to add, remove, or reorder
+- Keep working through the list until all tasks are completed — do not stop mid-way
+- When starting a new set of work, submit a fresh list
+- Do not call todo_write multiple times in the same turn
+
+### Task Completion Rules
+- Only mark a task `completed` when FULLY accomplished
+- If blocked or encountering errors, keep the task as `in_progress`
+- Never mark completed if: tests are failing, implementation is partial, \
+or unresolved errors remain
+- When blocked, add a new task describing what needs to be resolved
+
+### Example
+
+User: "Add input validation to the user registration endpoint. Make sure everything works."
+
+The task spans multiple concerns (validation, error handling, testing) and \
+"make sure everything works" implies verification — using todo_write to track:
+```json
+{"todos": [
+  {"id": "1", "content": "Read registration endpoint code", "status": "in_progress"},
+  {"id": "2", "content": "Add email and password validation", "status": "pending"},
+  {"id": "3", "content": "Add error response formatting", "status": "pending"},
+  {"id": "4", "content": "Update tests for validation cases", "status": "pending"},
+  {"id": "5", "content": "Run tests and verify", "status": "pending"}
+]}
+```""",
 }
 
 _FS_TOOL_NAMES = frozenset(
@@ -192,6 +249,8 @@ def make_tools_section() -> PromptSection:
             parts.append(_TOOL_SUPPLEMENTS["filesystem"])
         if _has_tool(ctx, "terminal_tool"):
             parts.append(_TOOL_SUPPLEMENTS["terminal"])
+        if _has_tool(ctx, "todo_write"):
+            parts.append(_TOOL_SUPPLEMENTS["todo"])
         if not parts:
             return ""
         return "# Using Your Tools\n\n" + "\n\n".join(parts)

@@ -105,6 +105,15 @@ class CompositeHooks(DefaultHooks):
         for h in self._hooks:
             await h.on_approval_result(agent_name, result)
 
+    async def on_todo_update(
+        self,
+        agent_name: str,
+        todos: list[Any],
+        stats: dict[str, int],
+    ) -> None:
+        for h in self._hooks:
+            await h.on_todo_update(agent_name, todos, stats)
+
     async def on_team_start(self, team_name: str, mode: str) -> None:
         for h in self._hooks:
             await h.on_team_start(team_name, mode)

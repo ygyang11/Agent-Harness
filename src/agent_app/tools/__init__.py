@@ -16,6 +16,7 @@ from agent_app.tools.pdf_parser import pdf_parser
 from agent_app.tools.skill_tool import skill_tool
 from agent_app.tools.take_notes import list_notes, read_notes, take_notes
 from agent_app.tools.terminal import terminal_tool
+from agent_app.tools.todo_write import todo_write
 from agent_app.tools.web_fetch import web_fetch
 from agent_app.tools.web_search import web_search
 from agent_harness.tool.base import BaseTool
@@ -31,6 +32,7 @@ BUILTIN_TOOLS: list[BaseTool] = [
     list_notes,
     read_notes,
     skill_tool,
+    todo_write,
     *FILESYSTEM_TOOLS,
 ]
 
@@ -49,6 +51,7 @@ __all__ = [
     "list_notes",
     "read_notes",
     "skill_tool",
+    "todo_write",
     "read_file",
     "write_file",
     "edit_file",

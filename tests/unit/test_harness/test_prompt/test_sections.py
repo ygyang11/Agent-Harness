@@ -72,6 +72,17 @@ class TestMakeToolsSection:
         s = make_tools_section()
         assert s.resolve({"tools": [_FakeTool("web_search")]}) == ""
 
+    def test_todo_supplement(self) -> None:
+        s = make_tools_section()
+        result = s.resolve({"tools": [_FakeTool("todo_write")]})
+        assert "## Task Management" in result
+        assert "todo_write" in result
+
+    def test_todo_not_included_without_tool(self) -> None:
+        s = make_tools_section()
+        result = s.resolve({"tools": [_FakeTool("read_file")]})
+        assert "Task Management" not in result
+
 
 class TestMakeSkillsSection:
     def test_inactive_without_skill_tool(self) -> None:

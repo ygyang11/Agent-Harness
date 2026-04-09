@@ -79,6 +79,14 @@ class DefaultHooks:
     ) -> None:
         pass
 
+    async def on_todo_update(
+        self,
+        agent_name: str,
+        todos: list[Any],
+        stats: dict[str, int],
+    ) -> None:
+        pass
+
     async def on_team_start(self, team_name: str, mode: str) -> None:
         pass
 

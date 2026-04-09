@@ -21,4 +21,7 @@ ICONS: dict[str, str] = {
     "pending": "⏳",
     "summary": "⎿",
     "double_check": "✓✓",
+    "todo_done": "✓",
+    "todo_active": "●",
+    "todo_pending": "○",
 }

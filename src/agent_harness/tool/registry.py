@@ -1,8 +1,13 @@
 """Tool registry for managing available tools."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from agent_harness.core.registry import Registry
 from agent_harness.tool.base import BaseTool, ToolSchema
+
+if TYPE_CHECKING:
+    from agent_harness.hooks.base import DefaultHooks
 
 
 class ToolRegistry:
@@ -53,6 +58,31 @@ class ToolRegistry:
 
     def __len__(self) -> int:
         return len(self._registry)
+
+    # ── Stateful tool support ──
+
+    def save_states(self) -> dict[str, dict[str, Any]]:
+        """Collect states from all stateful tools for session persistence."""
+        states: dict[str, dict[str, Any]] = {}
+        for tool in self._registry.list_all().values():
+            s = tool.get_state()
+            if s is not None:
+                states[tool.name] = s
+        return states
+
+    async def restore_states(
+        self,
+        states: dict[str, dict[str, Any]],
+        hooks: DefaultHooks,
+        agent_name: str,
+    ) -> None:
+        """Restore tool states from session and notify hooks."""
+        if not states:
+            return
+        for tool in self._registry.list_all().values():
+            if tool.name in states:
+                tool.restore_state(states[tool.name])
+                await tool.notify_state(hooks, agent_name)
 
     def __contains__(self, name: str) -> bool:
         return self._registry.has(name)

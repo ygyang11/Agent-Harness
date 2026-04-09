@@ -445,6 +445,41 @@ class TracingHooks(DefaultHooks):
             attributes={"orchestration": "team", "mode": mode},
         )
 
+    async def on_todo_update(
+        self,
+        agent_name: str,
+        todos: list[Any],
+        stats: dict[str, int],
+    ) -> None:
+        active = _active_step_span.get(None) or _active_run_span.get(None)
+        if active:
+            active.add_event(
+                "todo_update",
+                agent=agent_name,
+                total=stats.get("total", 0),
+                completed=stats.get("completed", 0),
+                in_progress=stats.get("in_progress", 0),
+            )
+        indent = (
+            self._span_depth_map.get(active.span_id, 0) + 1
+            if active
+            else 1
+        )
+        total = stats.get("total", 0)
+        completed = stats.get("completed", 0)
+        current = next(
+            (
+                t.get("content", "")
+                for t in todos
+                if t.get("status") == "in_progress"
+            ),
+            "",
+        )
+        label = f"progress={completed}/{total}"
+        if current:
+            label += f", current={current}"
+        self._cwrite(f"{'  ' * indent}* todo_update {{{label}}}\n")
+
     async def on_team_end(self, team_name: str, mode: str) -> None:
         _active_orchestration_parent.set(None)
         span = self._team_span_stack.pop() if self._team_span_stack else None

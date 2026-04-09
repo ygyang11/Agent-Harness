@@ -106,6 +106,50 @@ class ProgressHooks(DefaultHooks):
             self._output.write(delta.chunk.delta_content)
             self._output.flush()
 
+    async def on_todo_update(
+        self,
+        agent_name: str,
+        todos: list[Any],
+        stats: dict[str, int],
+    ) -> None:
+        if self._streaming:
+            self._output.write("\n")
+            self._output.flush()
+            self._streaming = False
+
+        total = stats.get("total", 0)
+        completed = stats.get("completed", 0)
+
+        green, yellow, dim, bold, reset = (
+            self._c("green"),
+            self._c("yellow"),
+            self._c("dim"),
+            self._c("bold"),
+            self._c("reset"),
+        )
+
+        icon = ICONS.get("todo_active", "")
+        self._write(f"  {bold}{icon} Tasks [{completed}/{total}]{reset}\n")
+
+        for t in todos:
+            status = t.get("status", "pending")
+            content = t.get("content", "")
+            if status == "completed":
+                self._write(
+                    f"    {green}{ICONS['todo_done']}{reset} {dim}{content}{reset}\n"
+                )
+            elif status == "in_progress":
+                self._write(
+                    f"    {yellow}{ICONS['todo_active']}{reset} {content}\n"
+                )
+            else:
+                self._write(
+                    f"    {dim}{ICONS['todo_pending']} {content}{reset}\n"
+                )
+
+        if completed == total and total > 0:
+            self._write(f"    {green}All tasks completed.{reset}\n")
+
     async def on_step_end(self, agent_name: str, step: int) -> None:
         if self._streaming:
             self._output.write("\n")

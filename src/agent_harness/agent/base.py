@@ -247,9 +247,17 @@ class BaseAgent(ABC, EventEmitter):
             if state:
                 await self.context.restore_from_state(state, self.system_prompt)
                 self._session_created_at = state.created_at
+                
                 compressor = self.context.short_term_memory.compressor
                 if compressor:
                     compressor.restore_runtime_state(state.messages)
+
+                # Restore stateful tool states
+                await self.tool_registry.restore_states(
+                    state.metadata.get("_tool_states", {}),
+                    self.hooks,
+                    self.name,
+                )
 
         # Normalize input
         if isinstance(input, str):
@@ -309,6 +317,9 @@ class BaseAgent(ABC, EventEmitter):
                 )
                 ss.created_at = self._session_created_at or now
                 ss.updated_at = now
+                tool_states = self.tool_registry.save_states()
+                if tool_states:
+                    ss.metadata["_tool_states"] = tool_states
                 await resolved_session.save_state(ss)
 
         messages = await self.context.short_term_memory.get_context_messages()
@@ -396,17 +407,23 @@ class BaseAgent(ABC, EventEmitter):
             await self.hooks.on_compression_start(self.name)
 
         # Build runtime context (ephemeral, not persisted)
-        extra_sys: list[Message] | None = None
+        extra_sys: list[Message] = []
         runtime_msg = self._runtime_ctx.build_context_message()
         if runtime_msg:
-            extra_sys = [runtime_msg]
+            extra_sys.append(runtime_msg)
+
+        # Collect ephemeral context from stateful tools
+        for tool in self.tools:
+            ctx_msg = tool.build_context_message()
+            if ctx_msg:
+                extra_sys.append(ctx_msg)
 
         messages = await self.context.build_llm_messages(
             base_messages=messages,
             include_working=True,
             include_long_term=use_long_term,
             long_term_query=long_term_query,
-            extra_system_messages=extra_sys,
+            extra_system_messages=extra_sys or None,
         )
 
         # Notify after compression (if it happened)
@@ -566,6 +583,18 @@ class BaseAgent(ABC, EventEmitter):
                     is_error=r.is_error,
                 )
             )
+
+        # Notify stateful tools after successful execution
+        for tc in approved:
+            tc_result = result_map.get(tc.id)
+            if tc_result and not tc_result.is_error:
+                tool = (
+                    self.tool_registry.get(tc.name)
+                    if self.tool_registry.has(tc.name)
+                    else None
+                )
+                if tool:
+                    await tool.notify_state(self.hooks, self.name)
 
         return ordered
 
