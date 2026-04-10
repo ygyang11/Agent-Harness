@@ -72,6 +72,9 @@ class ToolTimeoutError(ToolError):
 class ToolValidationError(ToolError):
     """Tool arguments failed validation."""
 
+class ToolExecutionError(ToolError):
+    """Tool execution failed at runtime."""
+
 
 # --- Config Errors ---
 

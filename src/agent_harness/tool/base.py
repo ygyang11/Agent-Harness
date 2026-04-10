@@ -6,13 +6,24 @@ Every tool exposes a JSON Schema description for LLM function calling.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from agent_harness.core.message import Message
     from agent_harness.hooks.base import DefaultHooks
 
 from pydantic import BaseModel, Field
+
+
+@runtime_checkable
+class AgentAware(Protocol):
+    """Protocol for tools that need access to the parent agent.
+
+    Tools implementing this protocol will receive a reference to
+    the parent agent during registration via bind_agent().
+    """
+
+    def bind_agent(self, agent: Any) -> None: ...
 
 
 class ToolParameter(BaseModel):

@@ -14,6 +14,7 @@ from agent_app.tools.paper_fetch import paper_fetch
 from agent_app.tools.paper_search import paper_search
 from agent_app.tools.pdf_parser import pdf_parser
 from agent_app.tools.skill_tool import skill_tool
+from agent_app.tools.sub_agent import sub_agent
 from agent_app.tools.take_notes import list_notes, read_notes, take_notes
 from agent_app.tools.terminal import terminal_tool
 from agent_app.tools.todo_write import todo_write
@@ -33,6 +34,7 @@ BUILTIN_TOOLS: list[BaseTool] = [
     read_notes,
     skill_tool,
     todo_write,
+    sub_agent,
     *FILESYSTEM_TOOLS,
 ]
 
@@ -52,6 +54,7 @@ __all__ = [
     "read_notes",
     "skill_tool",
     "todo_write",
+    "sub_agent",
     "read_file",
     "write_file",
     "edit_file",

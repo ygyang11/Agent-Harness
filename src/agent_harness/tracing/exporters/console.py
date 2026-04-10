@@ -21,6 +21,7 @@ _COLORS = {
     "tool": "\033[1;33m",          # Bold Yellow
     "memory": "\033[1;35m",        # Bold Magenta
     "orchestration": "\033[1;36m", # Bold Cyan
+    "subagent": "\033[1;36m",      # Bold Cyan (same as orchestration)
     "internal": "\033[0;37m",      # Gray
     "error": "\033[1;31m",         # Bold Red
     "reset": "\033[0m",

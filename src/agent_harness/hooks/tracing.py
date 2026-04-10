@@ -99,6 +99,7 @@ class TracingHooks(DefaultHooks):
         self._dag_span_stack: list[Span] = []
         self._team_span_stack: list[Span] = []
         self._dag_node_span_stack: list[Span] = []
+        self._subagent_spans: dict[str, Span] = {}
         self._all_spans: list[Span] = []
         self._span_depth_map: dict[str, int] = {}
         self._depth = 0
@@ -176,6 +177,7 @@ class TracingHooks(DefaultHooks):
             self._dag_span_stack = []
             self._team_span_stack = []
             self._dag_node_span_stack = []
+            self._subagent_spans = {}
             self._all_spans = []
             self._span_depth_map = {}
 
@@ -486,3 +488,38 @@ class TracingHooks(DefaultHooks):
         if span:
             self._finish_until(span)
         self._end_execution()
+
+    async def on_subagent_start(
+        self, parent_name: str, subagent_name: str,
+        agent_type: str, description: str, prompt: str,
+    ) -> None:
+        truncated_prompt = truncate_text_by_tokens(
+            prompt, max_tokens=_TRACE_TEXT_MAX_TOKENS, suffix="",
+        )
+        step_span = _active_step_span.get(None)
+        span = self._new_span(
+            f"subagent.{subagent_name}", kind="subagent",
+            parent_span=step_span,
+            agent_type=agent_type, description=description,
+            prompt=truncated_prompt,
+        )
+        self._subagent_spans[subagent_name] = span
+        _active_orchestration_parent.set(span)
+        self._cprint_start(
+            kind=span.kind, name=span.name,
+            indent=self._span_depth_map.get(span.span_id, 0),
+            attributes={"agent_type": agent_type, "description": description},
+        )
+
+    async def on_subagent_end(
+        self, parent_name: str, subagent_name: str,
+        agent_type: str, description: str,
+        steps: int, tool_calls: int, duration_ms: float,
+    ) -> None:
+        _active_orchestration_parent.set(None)
+        span = self._subagent_spans.pop(subagent_name, None)
+        if span:
+            span.attributes["steps"] = steps
+            span.attributes["tool_calls"] = tool_calls
+            span.attributes["duration_ms"] = duration_ms
+            self._finish_span(span)

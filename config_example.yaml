@@ -92,9 +92,18 @@ approval:
     - "edit_file(**/.env*)"
     # - "terminal_tool"                 # Uncomment to fully block terminal access
 
+# --- Sub-Agent ---
+sub_agent:
+  max_steps: 80                   # Max steps per sub-agent execution
+  types: {}                       # Custom types (merge with built-in: research, plan, general)
+    # Example custom type:
+    # security:
+    #   tools: ["read_file", "grep_files", "terminal_tool"]
+    #   intro: "You are a security auditor. Focus on vulnerabilities..."
+
 # --- Tracing & Observability ---
 tracing:
-  enabled: true                 # Enable tracing
+  enabled: false                 # Enable tracing
   exporter: "console"           # "console" | "json_file" ｜ "both"
   export_path: "./traces"       # Directory for trace exports
 

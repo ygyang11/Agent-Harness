@@ -121,3 +121,23 @@ class CompositeHooks(DefaultHooks):
     async def on_team_end(self, team_name: str, mode: str) -> None:
         for h in self._hooks:
             await h.on_team_end(team_name, mode)
+
+    async def on_subagent_start(
+        self, parent_name: str, subagent_name: str,
+        agent_type: str, description: str, prompt: str,
+    ) -> None:
+        for h in self._hooks:
+            await h.on_subagent_start(
+                parent_name, subagent_name, agent_type, description, prompt,
+            )
+
+    async def on_subagent_end(
+        self, parent_name: str, subagent_name: str,
+        agent_type: str, description: str,
+        steps: int, tool_calls: int, duration_ms: float,
+    ) -> None:
+        for h in self._hooks:
+            await h.on_subagent_end(
+                parent_name, subagent_name, agent_type, description,
+                steps, tool_calls, duration_ms,
+            )

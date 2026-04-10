@@ -22,6 +22,8 @@ from agent_harness.core.config import (
     PaperConfig,
     SearchConfig,
     SkillConfig,
+    SubAgentConfig,
+    SubAgentTypeSpec,
     ToolConfig,
     TracingConfig,
 )
@@ -37,7 +39,7 @@ from agent_harness.agent.conversational import ConversationalAgent
 from agent_harness.context.context import AgentContext
 from agent_harness.session import BaseSession, SessionState, FileSession, InMemorySession
 
-__version__ = "0.4.6"
+__version__ = "0.4.7"
 
 __all__ = [
     # Logging
@@ -64,6 +66,8 @@ __all__ = [
     "SearchConfig",
     "PaperConfig",
     "SkillConfig",
+    "SubAgentConfig",
+    "SubAgentTypeSpec",
     "Event",
     "EventBus",
     "HarnessError",

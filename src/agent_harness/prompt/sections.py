@@ -164,6 +164,65 @@ The task spans multiple concerns (validation, error handling, testing) and \
   {"id": "5", "content": "Run tests and verify", "status": "pending"}
 ]}
 ```""",
+
+
+    "sub_agent": """\
+## Sub-Agents
+
+You have access to a `sub_agent` tool to launch sub-agents that handle \
+isolated tasks. These agents are ephemeral — they live only for the \
+duration of the task and return a single result with an execution summary.
+
+### When to Use
+- When a task is complex and multi-step, and can be fully delegated \
+in isolation without needing your conversation context
+- When a task is independent of other tasks and can run in parallel \
+(e.g. researching multiple topics simultaneously)
+- When a task requires focused reasoning or heavy context usage that \
+would bloat your thread (e.g. scanning a large codebase, deep web \
+research, multi-file analysis)
+- When you only care about the output of the sub-agent, and not the \
+intermediate steps (e.g. performing research and returning a synthesized \
+report, executing a series of file edits and reporting what was done)
+
+### Lifecycle
+1. **Spawn** — Provide a clear prompt with all necessary context
+2. **Run** — The sub-agent completes the task autonomously
+3. **Return** — The sub-agent provides its final output with execution summary
+4. **Reconcile** — Incorporate or synthesize the result into your work
+
+### When NOT to Use
+- If the target is already known, use your own tools directly (e.g. \
+reading a specific file, searching for a known symbol)
+- If the task is trivial and takes only a few tool calls
+- If delegating does not reduce complexity or context usage
+- If you need to see the intermediate reasoning or steps after completion
+
+### Usage Notes
+- You can call sub_agent multiple times in a single turn for independent \
+tasks — they execute concurrently
+- Be specific about the task goal — the sub-agent has no awareness of \
+the user's intent or your conversation context
+- The sub-agent's outputs should generally be trusted
+- Use sub_agent to silo independent tasks within a multi-part objective
+- If you're unsure where to look, let a sub-agent explore, absorbing \
+the context cost of trial and error
+
+### Writing Good Prompts
+Brief the sub-agent like a smart colleague who just walked into the room — \
+it hasn't seen this conversation, doesn't know what you've tried, doesn't \
+understand why this task matters.
+- Explain what you're trying to accomplish and why
+- Describe what you've already learned or ruled out
+- Give enough context that the sub-agent can make judgment calls
+- If you need a specific level of detail, say so (e.g. "brief summary" \
+or "comprehensive analysis with code examples")
+- For lookups: hand over the exact query. For investigations: hand over the \
+question — prescribed steps become dead weight when the premise is wrong
+
+Never delegate understanding. Don't write "based on your findings, fix the \
+bug." Write prompts that prove you understood: include file paths, what \
+specifically to look for or change.""",
 }
 
 _FS_TOOL_NAMES = frozenset(
@@ -251,6 +310,8 @@ def make_tools_section() -> PromptSection:
             parts.append(_TOOL_SUPPLEMENTS["terminal"])
         if _has_tool(ctx, "todo_write"):
             parts.append(_TOOL_SUPPLEMENTS["todo"])
+        if _has_tool(ctx, "sub_agent"):
+            parts.append(_TOOL_SUPPLEMENTS["sub_agent"])
         if not parts:
             return ""
         return "# Using Your Tools\n\n" + "\n\n".join(parts)

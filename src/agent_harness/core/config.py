@@ -190,6 +190,20 @@ class SkillConfig(BaseModel):
         return v
 
 
+class SubAgentTypeSpec(BaseModel):
+    """Specification for a sub-agent type."""
+
+    tools: list[str] = Field(default_factory=list)
+    intro: str = ""
+
+
+class SubAgentConfig(BaseModel):
+    """Configuration for the sub-agent tool."""
+
+    max_steps: int = 80
+    types: dict[str, SubAgentTypeSpec] = Field(default_factory=dict)
+
+
 class ApprovalConfig(BaseModel):
     """Configuration for the approval system."""
 
@@ -218,6 +232,7 @@ class HarnessConfig(BaseModel):
     tracing: TracingConfig = Field(default_factory=TracingConfig)
     skill: SkillConfig = Field(default_factory=SkillConfig)
     approval: ApprovalConfig = Field(default_factory=ApprovalConfig)
+    sub_agent: SubAgentConfig = Field(default_factory=SubAgentConfig)
     verbose: bool = False
 
     _instance: ClassVar[HarnessConfig | None] = None

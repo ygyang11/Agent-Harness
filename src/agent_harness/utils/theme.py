@@ -24,4 +24,5 @@ ICONS: dict[str, str] = {
     "todo_done": "✓",
     "todo_active": "●",
     "todo_pending": "○",
+    "subagent": "🤖",
 }

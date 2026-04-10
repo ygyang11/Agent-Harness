@@ -1,11 +1,16 @@
 """ProgressHooks — user-facing progress output."""
 from __future__ import annotations
 
+import contextvars
 import sys
 from typing import TYPE_CHECKING, Any
 
 from agent_harness.hooks.base import DefaultHooks
 from agent_harness.utils.theme import COLORS, ICONS
+
+_subagent_active: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_subagent_active", default=False
+)
 
 if TYPE_CHECKING:
     from agent_harness.approval.types import ApprovalRequest, ApprovalResult
@@ -30,6 +35,8 @@ class ProgressHooks(DefaultHooks):
         return COLORS.get(name, "") if self._color else ""
 
     async def on_tool_call(self, agent_name: str, tool_call: ToolCall) -> None:
+        if _subagent_active.get(False):
+            return
         if self._streaming:
             self._output.write("\n")
             self._output.flush()
@@ -45,6 +52,8 @@ class ProgressHooks(DefaultHooks):
             self._write(f"{prefix}⚡ {bold}{tool_call.name}{reset}({args_preview})\n")
 
     async def on_compression_start(self, agent_name: str) -> None:
+        if _subagent_active.get(False):
+            return
         if self._streaming:
             self._output.write("\n")
             self._output.flush()
@@ -61,6 +70,8 @@ class ProgressHooks(DefaultHooks):
         compressed_count: int,
         summary_tokens: int,
     ) -> None:
+        if _subagent_active.get(False):
+            return
         dim, reset = self._c("dim"), self._c("reset")
         self._write(
             f"  {ICONS['summary']} {dim}Context compressed: "
@@ -92,6 +103,8 @@ class ProgressHooks(DefaultHooks):
             self._write(f"  {red}{denied} Denied: {label}{reason}{reset}\n")
 
     async def on_tool_result(self, agent_name: str, result: Any) -> None:
+        if _subagent_active.get(False):
+            return
         tool_call_id = getattr(result, "tool_call_id", None)
         if tool_call_id and tool_call_id in self._denied_tool_ids:
             return
@@ -99,6 +112,8 @@ class ProgressHooks(DefaultHooks):
             self._tool_error_count += 1
 
     async def on_llm_stream_delta(self, agent_name: str, delta: StreamDelta) -> None:
+        if _subagent_active.get(False):
+            return
         if delta.chunk.delta_content:
             if not self._streaming:
                 self._streaming = True
@@ -151,6 +166,8 @@ class ProgressHooks(DefaultHooks):
             self._write(f"    {green}All tasks completed.{reset}\n")
 
     async def on_step_end(self, agent_name: str, step: int) -> None:
+        if _subagent_active.get(False):
+            return
         if self._streaming:
             self._output.write("\n")
             self._output.flush()
@@ -185,6 +202,41 @@ class ProgressHooks(DefaultHooks):
         self._tool_call_count = 0
         self._tool_error_count = 0
         self._denied_tool_ids.clear()
+
+    async def on_subagent_start(
+        self, parent_name: str, subagent_name: str,
+        agent_type: str, description: str, prompt: str,
+    ) -> None:
+        if self._streaming:
+            self._output.write("\n")
+            self._output.flush()
+            self._streaming = False
+        bold, dim, reset = self._c("bold"), self._c("dim"), self._c("reset")
+        icon = ICONS.get("subagent", "")
+        preview = description[:60] + "..." if len(description) > 60 else description
+        self._write(
+            f"  {icon} {bold}SubAgent{reset} [{agent_type}] "
+            f"{dim}\"{preview}\"{reset}\n"
+        )
+
+    async def on_subagent_end(
+        self, parent_name: str, subagent_name: str,
+        agent_type: str, description: str,
+        steps: int, tool_calls: int, duration_ms: float,
+    ) -> None:
+        if self._streaming:
+            self._output.write("\n")
+            self._output.flush()
+            self._streaming = False
+        green, dim, reset = self._c("green"), self._c("dim"), self._c("reset")
+        icon = ICONS.get("summary", "")
+        preview = description[:60] + "..." if len(description) > 60 else description
+        duration_s = duration_ms / 1000
+        self._write(
+            f"  {icon} {green}✓{reset} [{agent_type}] "
+            f"\"{preview}\" "
+            f"{dim}({steps} steps, {tool_calls} tools, {duration_s:.1f}s){reset}\n"
+        )
 
     def _write(self, text: str) -> None:
         self._output.write(text)

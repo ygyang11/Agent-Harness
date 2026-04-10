@@ -92,3 +92,25 @@ class DefaultHooks:
 
     async def on_team_end(self, team_name: str, mode: str) -> None:
         pass
+
+    async def on_subagent_start(
+        self,
+        parent_name: str,
+        subagent_name: str,
+        agent_type: str,
+        description: str,
+        prompt: str,
+    ) -> None:
+        pass
+
+    async def on_subagent_end(
+        self,
+        parent_name: str,
+        subagent_name: str,
+        agent_type: str,
+        description: str,
+        steps: int,
+        tool_calls: int,
+        duration_ms: float,
+    ) -> None:
+        pass

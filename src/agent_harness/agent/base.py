@@ -89,7 +89,7 @@ class BaseAgent(ABC, EventEmitter):
         tools: list[BaseTool] | None = None,
         context: AgentContext | None = None,
         hooks: DefaultHooks | None = None,
-        max_steps: int = 20,
+        max_steps: int = 100,
         system_prompt: str = "",
         use_long_term_memory: bool = False,
         stream: bool = True,
@@ -122,9 +122,13 @@ class BaseAgent(ABC, EventEmitter):
         )
 
         # Set up tool registry and executor
+        from agent_harness.tool.base import AgentAware
+
         self.tool_registry = ToolRegistry()
         for t in tools or []:
             self.tool_registry.register(t)
+            if isinstance(t, AgentAware):
+                t.bind_agent(self)
         self.tool_executor = ToolExecutor(
             self.tool_registry,
             config=self.context.config,
