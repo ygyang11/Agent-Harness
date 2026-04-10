@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 
 from agent_harness.core.config import resolve_pdf_config
+from agent_harness.tool.base import BaseTool
 from agent_harness.tool.decorator import tool
 from agent_harness.utils.http_retry import (
     HttpRetryConfig,
@@ -423,3 +424,6 @@ async def pdf_parser(url: str) -> str:
         max_tokens=_CFG.max_output_tokens,
         suffix="\n... (truncated)",
     )
+
+
+PDF_TOOLS: list[BaseTool] = [pdf_parser]

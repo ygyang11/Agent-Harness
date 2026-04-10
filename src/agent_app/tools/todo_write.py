@@ -239,3 +239,5 @@ class TodoWriteTool(BaseTool):
 
 
 todo_write = TodoWriteTool()
+
+TODO_TOOLS: list[BaseTool] = [todo_write]

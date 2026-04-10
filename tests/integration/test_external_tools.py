@@ -9,7 +9,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_web_search_missing_api_key() -> None:
     """web_search returns error when API key is missing."""
-    from agent_app.tools.web_search import web_search
+    from agent_app.tools.web import web_search
 
     with patch("agent_harness.core.config.resolve_search_config") as mock_cfg:
         cfg = MagicMock()

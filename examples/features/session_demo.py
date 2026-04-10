@@ -19,7 +19,7 @@ import asyncio
 from pathlib import Path
 
 from agent_harness import HarnessConfig, ReActAgent
-from agent_app.tools import web_search
+from agent_app.tools import WEB_TOOLS
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -29,7 +29,7 @@ async def demo_multi_turn(config: HarnessConfig) -> None:
     No session needed — state lives in memory between calls."""
     print("=== Mode 1: Multi-turn run() (no session) ===\n")
 
-    agent = ReActAgent(name="assistant", tools=[web_search], config=config)
+    agent = ReActAgent(name="assistant", tools=[*WEB_TOOLS], config=config)
 
     queries = [
         "Search for the latest news about 5G satellite communication simply.",
@@ -55,7 +55,7 @@ async def demo_chat(config: HarnessConfig, session_id: str | None = None) -> Non
     print(f"=== Mode 2: Interactive {mode} ===")
     print("Type 'exit' to quit.\n")
 
-    agent = ReActAgent(name="assistant", tools=[web_search], config=config)
+    agent = ReActAgent(name="assistant", tools=[*WEB_TOOLS], config=config)
     await agent.chat(session=session_id, prompt="You> ")
 
 
@@ -64,7 +64,7 @@ async def demo_resume(config: HarnessConfig, session_id: str) -> None:
     print(f"=== Mode 3: Resuming session '{session_id}' ===")
     print("Type 'exit' to quit.\n")
 
-    agent = ReActAgent(name="assistant", tools=[web_search], config=config)
+    agent = ReActAgent(name="assistant", tools=[*WEB_TOOLS], config=config)
     await agent.chat(session=session_id, prompt="You> ")
 
 

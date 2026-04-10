@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_app.tools.skill_tool import skill_tool
+from agent_app.tools.skill import skill_tool
 from agent_harness.agent.react import ReActAgent
 from agent_harness.core.config import HarnessConfig, SkillConfig
 from agent_harness.core.errors import MaxStepsExceededError

@@ -444,3 +444,5 @@ class SubAgentTool(BaseTool):
 
 
 sub_agent = SubAgentTool()
+
+SUB_AGENT_TOOLS: list[BaseTool] = [sub_agent]

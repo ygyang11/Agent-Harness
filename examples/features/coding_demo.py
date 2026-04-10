@@ -16,17 +16,14 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from agent_app.tools.filesystem import FILESYSTEM_TOOLS
-from agent_app.tools.terminal import terminal_tool
-from agent_app.tools.sub_agent import sub_agent
-from agent_app.tools.todo_write import todo_write
-from agent_app.tools.web_fetch import web_fetch
-from agent_app.tools.web_search import web_search
+from agent_app.tools import (
+    FILESYSTEM_TOOLS, TERMINAL_TOOLS, WEB_TOOLS, TODO_TOOLS, SUB_AGENT_TOOLS,
+)
 from agent_harness import HarnessConfig, ReActAgent
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-ALL_TOOLS = [*FILESYSTEM_TOOLS, terminal_tool, web_search, web_fetch, todo_write, sub_agent]
+ALL_TOOLS = [*FILESYSTEM_TOOLS, *TERMINAL_TOOLS, *WEB_TOOLS, *TODO_TOOLS, *SUB_AGENT_TOOLS]
 
 SYSTEM_PROMPT = (
     "You are a skilled Python developer. "

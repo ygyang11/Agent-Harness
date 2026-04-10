@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from agent_app.tools import BUILTIN_TOOLS
-from agent_app.tools.skill_tool import SkillTool, skill_tool
+from agent_app.tools.skill.skill_tool import SkillTool, skill_tool
 from agent_harness.core.config import HarnessConfig, SkillConfig
 from tests.unit.test_app.test_skills.conftest import _write_skill
 
