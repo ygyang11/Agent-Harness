@@ -111,6 +111,109 @@ does not persist between calls
 - Before running destructive operations, consider whether there is a safer alternative""",
 
 
+    "web": """\
+## Web Tools
+
+You have `web_search` and `web_fetch` for accessing web content.
+
+1. **Search first** — use `web_search` to get ranked snippets with URLs
+2. **Fetch selectively** — use `web_fetch` to read specific pages from results
+3. Do not guess URLs — search first, then fetch from results or user-provided URLs""",
+
+
+    "paper": """\
+## Academic Paper Tools
+
+You have `paper_search` and `paper_fetch` for academic literature.
+
+### Source Selection
+- **arxiv**: Best for preprints, CS/AI papers, fast access
+- **semantic_scholar**: Best for published papers across all publishers \
+(IEEE, ACM, ScienceDirect, PubMed, etc.)
+
+### Workflow
+1. **Search** — returns structured metadata including title, abstract, etc.
+2. **Fetch** — two modes: `metadata` for detailed info beyond search results \
+(reference count, fields of study, TL;DR, etc.), `full` for the \
+complete paper body text
+3. Search results already include core metadata — fetch `metadata` only \
+if specific fields are missing, fetch `full` when you need to deeply \
+understand a paper's methodology, results, or technical details.""",
+
+
+    "pdf": """\
+## PDF Parsing
+
+You have a `pdf_parser` tool for extracting text from PDF documents.
+
+### When to Use
+- When `web_fetch` reports a URL is a PDF document and you need its content 
+- When the user provides a PDF url or local file directly
+- For academic papers, `paper_fetch(mode="full")` which handles \
+PDF extraction internally and provides its full content.
+
+### Capabilities
+- Extracts text, tables, and formulas from complex layouts
+- Returns content as structured Markdown""",
+
+
+    "memory_tool": """\
+## Memory
+
+You have a `memory_tool` to save, read and delete persistent memories \
+across sessions — who the user is, how they prefer to work, project \
+context, external resources, and domain expertise you accumulate over time.
+
+Your context includes a memory index (grouped by scope and type) \
+with one-line descriptions of all saved memories. This index updates \
+in real time — memories you save are immediately visible in subsequent steps.
+
+Before saving, ask yourself: "in a brand new conversation, would having \
+this memory change how I work?" If yes, call `memory_tool` before doing \
+anything else — before responding, before calling other tools. If the \
+user explicitly asks you to remember something persistently, save it immediately.
+
+### Scope
+
+- **global**: Information that remains useful regardless of which project \
+you are working on. Ask: "if I switch to a different project, would this \
+memory still be relevant?"
+- **project**: Information that only makes sense in the context of the \
+current project. Ask: "if I switch projects, would this memory still apply?"
+
+### Types
+
+- **user** — Role, skill level, preferences, etc. Tailor your \
+responses to their background.
+- **feedback** — Corrections and preferences about your behavior or\
+approach that should carry forward to future sessions.
+- **project** — Context and decisions that shape the project but aren't \
+visible in the codebase itself.
+- **reference** — URLs, links, and pointers to external resources.
+- **knowledge** — Domain expertise from research, trial-and-error, or \
+deep analysis. Unlike other types, organize by topic rather than \
+specific fact — accumulate findings over time and update as you \
+learn more. Save conclusions, not raw data.
+
+### What NOT to Save
+
+- code patterns, file paths, git history, etc. — read the codebase instead
+- Stale or irrelevant information that may not work in the in future conversations
+- One-time requests, simple questions, acknowledgments, or small talk
+- Content already documented in project instruction files
+- Never store API keys, access tokens, passwords, or any other credentials in any memory or file
+
+### Using Saved Memories
+
+- Read the full content before acting — the one-line description is for \
+relevance judgment, not for action
+- To update a memory, read it first, ensure the new information belongs \
+in this memory, then merge and save the combined result
+- Memories become stale — verify facts still hold before recommending
+- If a memory conflicts with current state, trust what you observe now \
+and update or remove the stale memory""",
+
+
     "todo": """\
 ## Task Management
 
@@ -225,6 +328,9 @@ bug." Write prompts that prove you understood: include file paths, what \
 specifically to look for or change.""",
 }
 
+_WEB_TOOL_NAMES = frozenset({"web_fetch", "web_search"})
+_PAPER_TOOL_NAMES = frozenset({"paper_search", "paper_fetch"})
+
 _FS_TOOL_NAMES = frozenset(
     {
         "read_file",
@@ -308,6 +414,14 @@ def make_tools_section() -> PromptSection:
             parts.append(_TOOL_SUPPLEMENTS["filesystem"])
         if _has_tool(ctx, "terminal_tool"):
             parts.append(_TOOL_SUPPLEMENTS["terminal"])
+        if _has_any_tool(ctx, _WEB_TOOL_NAMES):
+            parts.append(_TOOL_SUPPLEMENTS["web"])
+        if _has_any_tool(ctx, _PAPER_TOOL_NAMES):
+            parts.append(_TOOL_SUPPLEMENTS["paper"])
+        if _has_tool(ctx, "pdf_parser"):
+            parts.append(_TOOL_SUPPLEMENTS["pdf"])
+        if _has_tool(ctx, "memory_tool"):
+            parts.append(_TOOL_SUPPLEMENTS["memory_tool"])
         if _has_tool(ctx, "todo_write"):
             parts.append(_TOOL_SUPPLEMENTS["todo"])
         if _has_tool(ctx, "sub_agent"):
@@ -337,11 +451,11 @@ def make_skills_section() -> PromptSection:
             "<available_skills>\n"
             f"{catalog}\n"
             "</available_skills>\n\n"
-            "When to use:\n"
+            "## When to use:\n"
             "- A user request clearly matches a skill description listed above\n"
             "- You need domain-specific workflow guidance not in your "
             "training data\n\n"
-            "Rules:\n"
+            "## Rules:\n"
             "- Before responding to the user, check if the request matches "
             "an available skill. If a match exists, load the skill first — "
             "its instructions provide more thorough guidance than your "

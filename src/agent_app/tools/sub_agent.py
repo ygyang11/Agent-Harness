@@ -37,7 +37,7 @@ _BUILTIN_TYPES: dict[str, dict[str, Any]] = {
             "read_file", "list_dir", "glob_files", "grep_files",
             "web_fetch", "web_search",
             "paper_search", "paper_fetch", "pdf_parser",
-            "take_notes", "list_notes", "read_notes",
+            "memory_tool",
         ],
         "intro": (
             "You are a research sub-agent specialized in exploring codebases, "
@@ -46,6 +46,7 @@ _BUILTIN_TYPES: dict[str, dict[str, Any]] = {
             "This is a READ-ONLY research task. You are STRICTLY PROHIBITED from:\n"
             "- Creating, modifying, or deleting files\n"
             "- Running commands that change system state\n"
+            "- Saving or deleting memories, but reading is ok\n"
             "Your role is EXCLUSIVELY to search, read, and analyze.\n\n"
             "Your strengths:\n"
             "- Searching, reading and analyzing file contents across large codebases\n"
@@ -61,7 +62,7 @@ _BUILTIN_TYPES: dict[str, dict[str, Any]] = {
             "read_file", "list_dir", "glob_files", "grep_files",
             "web_fetch", "web_search",
             "paper_search", "paper_fetch", "pdf_parser",
-            "take_notes", "list_notes", "read_notes",
+            "memory_tool",
         ],
         "intro": (
             "You are a planning sub-agent specialized in analyzing content and "
@@ -70,6 +71,7 @@ _BUILTIN_TYPES: dict[str, dict[str, Any]] = {
             "This is a READ-ONLY planning task. You are STRICTLY PROHIBITED from:\n"
             "- Creating, modifying, or deleting files\n"
             "- Running commands that change system state\n"
+            "- Saving or deleting memories, but reading is ok\n"
             "Your role is EXCLUSIVELY to explore existing content and design plans.\n\n"
             "Your strengths:\n"
             "- Analyzing multiple files to understand system architecture\n"

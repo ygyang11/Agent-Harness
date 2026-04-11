@@ -410,17 +410,18 @@ class BaseAgent(ABC, EventEmitter):
         ):
             await self.hooks.on_compression_start(self.name)
 
-        # Build runtime context (ephemeral, not persisted)
+        # Collect ephemeral context from stateful tools (sorted by context_order)
         extra_sys: list[Message] = []
-        runtime_msg = self._runtime_ctx.build_context_message()
-        if runtime_msg:
-            extra_sys.append(runtime_msg)
-
-        # Collect ephemeral context from stateful tools
-        for tool in self.tools:
+        sorted_tools = sorted(self.tools, key=lambda t: t.context_order)
+        for tool in sorted_tools:
             ctx_msg = tool.build_context_message()
             if ctx_msg:
                 extra_sys.append(ctx_msg)
+
+        # Runtime context (injected after tool context)
+        runtime_msg = self._runtime_ctx.build_context_message()
+        if runtime_msg:
+            extra_sys.append(runtime_msg)
 
         messages = await self.context.build_llm_messages(
             base_messages=messages,

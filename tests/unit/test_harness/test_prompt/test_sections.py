@@ -70,7 +70,12 @@ class TestMakeToolsSection:
 
     def test_unrelated_tool(self) -> None:
         s = make_tools_section()
-        assert s.resolve({"tools": [_FakeTool("web_search")]}) == ""
+        assert s.resolve({"tools": [_FakeTool("unknown_tool")]}) == ""
+
+    def test_web_supplement(self) -> None:
+        s = make_tools_section()
+        result = s.resolve({"tools": [_FakeTool("web_search")]})
+        assert "## Web Tools" in result
 
     def test_todo_supplement(self) -> None:
         s = make_tools_section()

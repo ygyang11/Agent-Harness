@@ -15,9 +15,7 @@ class TestBuiltinTools:
         assert "web_fetch" in names
         assert "pdf_parser" in names
         assert "skill_tool" in names
-        assert "take_notes" in names
-        assert "list_notes" in names
-        assert "read_notes" in names
+        assert "memory_tool" in names
 
     def test_all_tools_have_schema(self) -> None:
         for t in BUILTIN_TOOLS:

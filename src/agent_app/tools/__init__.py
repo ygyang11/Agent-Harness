@@ -15,7 +15,7 @@ from agent_app.tools.paper import PAPER_TOOLS, paper_fetch, paper_search
 from agent_app.tools.pdf_parser import PDF_TOOLS, pdf_parser
 from agent_app.tools.skill import SKILL_TOOLS, skill_tool
 from agent_app.tools.sub_agent import SUB_AGENT_TOOLS, sub_agent
-from agent_app.tools.take_notes import list_notes, read_notes, take_notes
+from agent_app.tools.memory import MEMORY_TOOLS, memory_tool
 from agent_app.tools.terminal import TERMINAL_TOOLS, terminal_tool
 from agent_app.tools.todo_write import TODO_TOOLS, todo_write
 from agent_app.tools.web import WEB_TOOLS, web_fetch, web_search
@@ -26,9 +26,7 @@ BUILTIN_TOOLS: list[BaseTool] = [
     *WEB_TOOLS,
     *PDF_TOOLS,
     *PAPER_TOOLS,
-    take_notes,
-    list_notes,
-    read_notes,
+    *MEMORY_TOOLS,
     *SKILL_TOOLS,
     *TODO_TOOLS,
     *SUB_AGENT_TOOLS,
@@ -55,9 +53,8 @@ __all__ = [
     "pdf_parser",
     "paper_search",
     "paper_fetch",
-    "take_notes",
-    "list_notes",
-    "read_notes",
+    "MEMORY_TOOLS",
+    "memory_tool",
     "skill_tool",
     "todo_write",
     "sub_agent",

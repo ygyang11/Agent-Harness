@@ -7,9 +7,6 @@ from agent_harness import BaseTool, ConversationalAgent, HarnessConfig, ReActAge
 from agent_harness.agent.base import AgentResult
 from agent_harness.orchestration import AgentTeam, DAGNode, DAGOrchestrator, TeamMode
 from agent_app.tools import WEB_TOOLS, PAPER_TOOLS, PDF_TOOLS
-from agent_app.tools.take_notes import list_notes as builtin_list_notes
-from agent_app.tools.take_notes import read_notes as builtin_read_notes
-from agent_app.tools.take_notes import take_notes as builtin_take_notes
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -128,8 +125,6 @@ async def main() -> None:
         *WEB_TOOLS,
         *PAPER_TOOLS,
         *PDF_TOOLS,
-        builtin_take_notes,
-        builtin_list_notes,
     ]
     query = "What is the current state of quantum computing and its potential impact?"
 
@@ -172,7 +167,7 @@ async def main() -> None:
     print("Phase 4: Final synthesis...")
     writer = ReActAgent(
         name="final_writer",
-        tools=[builtin_list_notes, builtin_read_notes],
+        tools=[],
         system_prompt=DEEP_RESEARCH_PROMPTS["writer.system"],
         config=config,
     )

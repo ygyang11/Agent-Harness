@@ -95,6 +95,7 @@ class BaseTool(ABC):
         self.description = description
         self.executor_timeout = executor_timeout
         self.approval_resource_key = approval_resource_key
+        self.context_order: int = 0
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> str:

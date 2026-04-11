@@ -40,6 +40,7 @@ class TodoWriteTool(BaseTool):
                 "Keep exactly one task in_progress at all times while working."
             ),
         )
+        self.context_order = 200
         self._todos: list[TodoItem] = []
 
     @property
