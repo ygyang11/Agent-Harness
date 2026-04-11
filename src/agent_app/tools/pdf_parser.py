@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from agent_harness.core.config import resolve_pdf_config
 from agent_harness.tool.base import BaseTool
@@ -82,6 +83,193 @@ async def _post_json_with_retry(
     except json.JSONDecodeError:
         data = None
     return status, data, body
+
+
+def _is_local_file(path: str) -> bool:
+    return not path.startswith(("http://", "https://"))
+
+
+async def _read_local_file(path: str) -> tuple[str, bytes]:
+    """Read a local file and return (filename, bytes). Returns error string on failure."""
+    p = Path(path).expanduser().resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+    if not p.suffix.lower() == ".pdf":
+        raise ValueError(f"Expected a PDF file, got: {p.suffix}")
+    return p.name, p.read_bytes()
+
+
+# ---------------------------------------------------------------------------
+# MinerU local file upload
+# ---------------------------------------------------------------------------
+
+
+async def _upload_to_mineru(file_name: str, file_bytes: bytes, api_key: str) -> str:
+    """Upload a local file to MinerU and return the remote URL."""
+    import aiohttp  # noqa: PLC0415
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{_MINERU_BASE}/api/v4/file-urls/batch",
+            headers=headers,
+            json={"file_names": [file_name]},
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"Failed to get upload URL (HTTP {resp.status}): {body[:200]}")
+            result = await resp.json()
+
+    data = result.get("data")
+    if not isinstance(data, dict):
+        raise RuntimeError("Invalid response from MinerU file-urls API")
+    batch_id = data.get("batch_id", "")
+    file_urls = data.get("file_urls", [])
+    if not file_urls:
+        raise RuntimeError("MinerU returned no upload URLs")
+
+    upload_url = file_urls[0]
+
+    import aiohttp as _aio  # noqa: PLC0415
+
+    async with _aio.ClientSession() as session:
+        async with session.put(
+            upload_url,
+            data=file_bytes,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=_aio.ClientTimeout(total=120),
+        ) as resp:
+            if resp.status not in (200, 201):
+                raise RuntimeError(f"File upload failed (HTTP {resp.status})")
+
+    return upload_url
+
+
+async def _upload_to_mineru_lightweight(file_name: str, file_bytes: bytes) -> str:
+    """Upload a local file via MinerU lightweight API and return the task_id directly."""
+    import aiohttp  # noqa: PLC0415
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{_MINERU_BASE}/api/v1/agent/parse/file",
+            json={"file_name": file_name},
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"Failed to get upload URL (HTTP {resp.status}): {body[:200]}")
+            result = await resp.json()
+
+    data = result.get("data")
+    if not isinstance(data, dict):
+        raise RuntimeError("Invalid response from MinerU lightweight file API")
+    file_url = data.get("file_url", "")
+    if not file_url:
+        raise RuntimeError("MinerU returned no upload URL")
+
+    async with aiohttp.ClientSession() as session:
+        async with session.put(
+            file_url,
+            data=file_bytes,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=aiohttp.ClientTimeout(total=120),
+        ) as resp:
+            if resp.status not in (200, 201):
+                raise RuntimeError(f"File upload failed (HTTP {resp.status})")
+
+    return file_url
+
+
+# ---------------------------------------------------------------------------
+# PaddleOCR local file upload
+# ---------------------------------------------------------------------------
+
+
+async def _parse_paddleocr_file_with_model(
+    file_name: str, file_bytes: bytes, api_key: str, model: str,
+) -> str:
+    """Parse a local PDF via PaddleOCR multipart upload."""
+    import aiohttp  # noqa: PLC0415
+
+    headers = {"Authorization": f"bearer {api_key}"}
+    form = aiohttp.FormData()
+    form.add_field("model", model)
+    form.add_field(
+        "optionalPayload",
+        json.dumps({
+            "useDocOrientationClassify": False,
+            "useDocUnwarping": False,
+            "useChartRecognition": False,
+        }),
+    )
+    form.add_field("file", file_bytes, filename=file_name, content_type="application/pdf")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                _PADDLEOCR_JOB_URL,
+                headers=headers,
+                data=form,
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as resp:
+                status = resp.status
+                body = await resp.text()
+    except Exception as exc:
+        return f"Error: PDF parsing task submission failed: {exc}"
+
+    if status == 429:
+        return "Error: rate limit exceeded"
+    if status != 200:
+        return f"Error: PDF parsing task submission failed (HTTP {status}): {body[:200]}"
+
+    try:
+        result = json.loads(body)
+    except json.JSONDecodeError:
+        return "Error: PDF parsing task submission returned invalid JSON"
+
+    data_obj = result.get("data")
+    if not isinstance(data_obj, dict):
+        return "Error: PDF parsing service returned invalid submission payload"
+    job_id_obj = data_obj.get("jobId")
+    job_id = job_id_obj if isinstance(job_id_obj, str) else ""
+    if not job_id:
+        return "Error: PDF parsing service returned no job ID"
+
+    for _ in range(_CFG.max_poll_attempts):
+        await asyncio.sleep(_CFG.poll_interval)
+        try:
+            poll_status, poll_result, _body = await _get_json_with_retry(
+                f"{_PADDLEOCR_JOB_URL}/{job_id}",
+                headers={"Authorization": f"bearer {api_key}"},
+            )
+        except Exception as exc:
+            return f"Error: PDF parsing status polling failed: {exc}"
+        if poll_status == 429:
+            return "Error: rate limit exceeded"
+        if poll_status != 200:
+            return f"Error: PDF parsing status polling failed (HTTP {poll_status})"
+        if poll_result is None:
+            return "Error: PDF parsing status polling returned invalid JSON"
+        poll_data = poll_result.get("data")
+        if not isinstance(poll_data, dict):
+            return "Error: PDF parsing status polling returned invalid payload"
+        state_obj = poll_data.get("state")
+        state = state_obj if isinstance(state_obj, str) else ""
+        if state == "done":
+            result_url_obj = poll_data.get("resultUrl")
+            result_url = result_url_obj if isinstance(result_url_obj, dict) else {}
+            json_url_obj = result_url.get("jsonUrl")
+            json_url = json_url_obj if isinstance(json_url_obj, str) else ""
+            if not json_url:
+                return "Error: PDF parsing service returned no result URL"
+            return await _download_paddleocr_markdown(json_url)
+        if state == "failed":
+            err_obj = poll_data.get("errorMsg")
+            err = err_obj if isinstance(err_obj, str) and err_obj else "unknown error"
+            return f"Error: PDF parsing failed: {err}"
+
+    return "Error: PDF parsing timed out"
 
 
 # ---------------------------------------------------------------------------
@@ -374,34 +562,61 @@ async def _download_paddleocr_markdown(json_url: str) -> str:
 
 @tool(approval_resource_key="url")
 async def pdf_parser(url: str) -> str:
-    """Extract text from a PDF document at the given URL.
+    """Extract text from a PDF document and return structured Markdown text.
 
-    Submits the PDF URL to a cloud parsing service and returns
-    the extracted content as markdown text. Supports complex
+    Accepts a URL or local file path. The document is parsed via a
+    cloud service and returned as markdown text. Supports complex
     layouts, tables, and formulas.
 
     Args:
-        url: URL of the PDF document to parse.
+        url: URL or local file path of the PDF document to parse.
 
     Returns:
         Extracted text in markdown format, truncated to token budget.
         Errors are prefixed with ``Error:``.
     """
     if not url.strip():
-        return "Error: URL cannot be empty"
+        return "Error: URL or file path cannot be empty"
 
     cfg = resolve_pdf_config(None)
     provider = cfg.provider
+    is_local = _is_local_file(url)
+
+    # Read local file upfront if needed
+    file_name = ""
+    file_bytes = b""
+    if is_local:
+        try:
+            file_name, file_bytes = await _read_local_file(url)
+        except (FileNotFoundError, ValueError) as exc:
+            return f"Error: {exc}"
 
     if provider == "mineru":
         api_key = cfg.mineru_api_key or ""
-        if api_key:
-            raw = await _parse_mineru(url, api_key)
-            if raw.startswith("Error:"):
-                logger.warning("MinerU precise API failed, falling back to lightweight: %s", raw)
-                raw = await _parse_mineru_lightweight(url)
+        if is_local:
+            if api_key:
+                try:
+                    remote_url = await _upload_to_mineru(file_name, file_bytes, api_key)
+                except Exception as exc:
+                    logger.warning("MinerU precise upload failed, trying lightweight: %s", exc)
+                    try:
+                        remote_url = await _upload_to_mineru_lightweight(file_name, file_bytes)
+                    except Exception as exc2:
+                        return f"Error: file upload failed: {exc2}"
+            else:
+                try:
+                    remote_url = await _upload_to_mineru_lightweight(file_name, file_bytes)
+                except Exception as exc:
+                    return f"Error: file upload failed: {exc}"
+            raw = await _parse_mineru(remote_url, api_key) if api_key else await _parse_mineru_lightweight(remote_url)
         else:
-            raw = await _parse_mineru_lightweight(url)
+            if api_key:
+                raw = await _parse_mineru(url, api_key)
+                if raw.startswith("Error:"):
+                    logger.warning("MinerU precise API failed, falling back to lightweight: %s", raw)
+                    raw = await _parse_mineru_lightweight(url)
+            else:
+                raw = await _parse_mineru_lightweight(url)
     elif provider == "paddleocr":
         api_key = cfg.paddleocr_api_key or ""
         if not api_key:
@@ -409,10 +624,20 @@ async def pdf_parser(url: str) -> str:
                 "PDF parsing not configured: PADDLEOCR_API_KEY not set. "
                 "Set the environment variable or configure in config.yaml."
             )
-        raw = await _parse_paddleocr_with_model(url, api_key, "PaddleOCR-VL-1.5")
-        if raw.startswith("Error:"):
-            logger.warning("PaddleOCR VL-1.5 failed, falling back to VL: %s", raw)
-            raw = await _parse_paddleocr_with_model(url, api_key, "PaddleOCR-VL")
+        if is_local:
+            raw = await _parse_paddleocr_file_with_model(
+                file_name, file_bytes, api_key, "PaddleOCR-VL-1.5",
+            )
+            if raw.startswith("Error:"):
+                logger.warning("PaddleOCR VL-1.5 file upload failed, falling back to VL: %s", raw)
+                raw = await _parse_paddleocr_file_with_model(
+                    file_name, file_bytes, api_key, "PaddleOCR-VL",
+                )
+        else:
+            raw = await _parse_paddleocr_with_model(url, api_key, "PaddleOCR-VL-1.5")
+            if raw.startswith("Error:"):
+                logger.warning("PaddleOCR VL-1.5 failed, falling back to VL: %s", raw)
+                raw = await _parse_paddleocr_with_model(url, api_key, "PaddleOCR-VL")
     else:
         return f"Unknown PDF provider: {provider!r}. Use 'mineru' or 'paddleocr'."
 

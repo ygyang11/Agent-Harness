@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -11,7 +12,9 @@ from agent_app.tools.pdf_parser import (
     _download_mineru_markdown,
     _download_paddleocr_markdown,
     _get_json_with_retry,
+    _is_local_file,
     _post_json_with_retry,
+    _read_local_file,
     pdf_parser,
 )
 
@@ -48,6 +51,55 @@ class TestPdfParserValidation:
         ):
             result = await pdf_parser.execute(url="https://example.com/doc.pdf")
         assert "PADDLEOCR_API_KEY not set" in result
+
+
+class TestLocalFileDetection:
+    def test_url_is_not_local(self) -> None:
+        assert not _is_local_file("https://example.com/doc.pdf")
+        assert not _is_local_file("http://example.com/doc.pdf")
+
+    def test_path_is_local(self) -> None:
+        assert _is_local_file("/tmp/doc.pdf")
+        assert _is_local_file("./doc.pdf")
+        assert _is_local_file("doc.pdf")
+        assert _is_local_file("~/docs/paper.pdf")
+
+
+class TestReadLocalFile:
+    async def test_read_existing_pdf(self, tmp_path: Path) -> None:
+        pdf_file = tmp_path / "test.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 fake content")
+        name, data = await _read_local_file(str(pdf_file))
+        assert name == "test.pdf"
+        assert data == b"%PDF-1.4 fake content"
+
+    async def test_file_not_found(self) -> None:
+        with pytest.raises(FileNotFoundError):
+            await _read_local_file("/nonexistent/path/doc.pdf")
+
+    async def test_non_pdf_rejected(self, tmp_path: Path) -> None:
+        txt_file = tmp_path / "doc.txt"
+        txt_file.write_text("not a pdf")
+        with pytest.raises(ValueError, match="Expected a PDF"):
+            await _read_local_file(str(txt_file))
+
+
+class TestLocalFileParsing:
+    async def test_local_file_not_found_returns_error(self) -> None:
+        fake_cfg = PdfConfig(provider="mineru", mineru_api_key="key")
+        with patch("agent_app.tools.pdf_parser.resolve_pdf_config", return_value=fake_cfg):
+            result = await pdf_parser.execute(url="/nonexistent/doc.pdf")
+        assert result.startswith("Error:")
+        assert "not found" in result.lower()
+
+    async def test_local_non_pdf_returns_error(self, tmp_path: Path) -> None:
+        txt_file = tmp_path / "doc.txt"
+        txt_file.write_text("not a pdf")
+        fake_cfg = PdfConfig(provider="mineru", mineru_api_key="key")
+        with patch("agent_app.tools.pdf_parser.resolve_pdf_config", return_value=fake_cfg):
+            result = await pdf_parser.execute(url=str(txt_file))
+        assert result.startswith("Error:")
+        assert "PDF" in result
 
 
 class TestPdfConfigDefaults:
