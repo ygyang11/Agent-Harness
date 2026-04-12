@@ -331,7 +331,7 @@ async def paper_search(
 
     Args:
         query: Search query string or arXiv ID (e.g. "2301.07041").
-        source: "arxiv" by default (recommended for for preprints and CS/AI) or "semantic_scholar" for broader cross-publisher search (e.g., IEEE, ACM, ScienceDirect).
+        source: "arxiv" by default (recommended for preprints and CS/AI) or "semantic_scholar" for broader cross-publisher search (e.g., IEEE, ACM, ScienceDirect, PubMed, etc.).
         max_results: Number of results to return (1-30, default 10).
     """
     if not query.strip():

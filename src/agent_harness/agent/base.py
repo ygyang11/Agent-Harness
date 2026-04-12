@@ -151,6 +151,12 @@ class BaseAgent(ABC, EventEmitter):
         self.tool_executor.set_event_bus(self.context.event_bus)
         self.llm.set_event_bus(self.context.event_bus)
 
+        # Loop detection
+        from agent_harness.utils.loop_detector import LoopDetector
+
+        self._loop_detector = LoopDetector()
+        self._pending_loop_warning: Message | None = None
+
         # Context compression setup
         if (
             self.context.config.memory.strategy == "summarize"
@@ -191,6 +197,29 @@ class BaseAgent(ABC, EventEmitter):
             "cwd": str(Path.cwd()),
             "skill_loader": skill_loader,
         }
+    
+    async def _check_loop(self, tool_calls: list[ToolCall]) -> None:
+        """Record tool calls and check for repetitive loop pattern."""
+        self._loop_detector.record(tool_calls)
+        signal = self._loop_detector._check()
+        if signal.level == "break":
+            from agent_harness.core.errors import LoopDetectedError
+
+            names = [tc.name for tc in tool_calls]
+            raise LoopDetectedError(
+                f"Agent '{self.name}' stuck in loop: "
+                f"{signal.streak} consecutive identical calls to {names}",
+                streak=signal.streak,
+            )
+        warning = self._loop_detector.build_warning_message(signal)
+        if warning:
+            self._pending_loop_warning = warning
+            logger.warning(
+                "Loop %s warning for agent '%s': streak=%d",
+                signal.level,
+                self.name,
+                signal.streak,
+            )
 
     @property
     def tools(self) -> list[BaseTool]:
@@ -282,6 +311,8 @@ class BaseAgent(ABC, EventEmitter):
 
         steps: list[StepResult] = []
         self._total_usage = Usage()
+        self._loop_detector.reset()
+        self._pending_loop_warning = None
         final_output = ""
 
         try:
@@ -294,6 +325,10 @@ class BaseAgent(ABC, EventEmitter):
 
                 await self.hooks.on_step_end(self.name, step_num)
                 await self.emit("agent.step.end", agent=self.name, step=step_num)
+
+                # Loop detection (after step hooks to ensure span closure)
+                if step_result.action:
+                    await self._check_loop(step_result.action)
 
                 if step_result.response is not None:
                     final_output = step_result.response
@@ -441,6 +476,11 @@ class BaseAgent(ABC, EventEmitter):
                     comp_result.compressed_count,
                     comp_result.summary_tokens,
                 )
+
+        # Ephemeral loop warning (one-shot, appended at end for context)
+        if self._pending_loop_warning:
+            messages.append(self._pending_loop_warning)
+            self._pending_loop_warning = None
 
         if tools is None and self.tool_schemas:
             tools = self.tool_schemas

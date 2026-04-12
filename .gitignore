@@ -36,9 +36,7 @@ config.yaml
 .plan
 .research
 .review
-research*.md
-plan*.md
-review*.md
+.agent-harness
 
 # ===== Output & Traces =====
 .notes

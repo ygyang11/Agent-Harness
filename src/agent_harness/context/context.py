@@ -228,6 +228,11 @@ class AgentContext:
                 except Exception as e:
                     logger.warning("Failed to query long-term memory: %s", e)
 
+        # Patch dangling tool_call
+        from agent_harness.utils.message_repair import patch_dangling_tool_calls
+
+        messages = patch_dangling_tool_calls(messages)
+
         # Final token budget guard after all injections (atomic-group aware)
         max_tokens = self.config.memory.max_tokens
         total = count_messages_tokens(messages, self.config.llm.model)

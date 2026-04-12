@@ -140,3 +140,16 @@ class MaxStepsExceededError(AgentError):
         super().__init__(message, **kwargs)
         self.max_steps = max_steps
         self.actual_steps = actual_steps
+
+
+class LoopDetectedError(AgentError):
+    """Agent stuck in a repetitive loop."""
+    def __init__(
+        self,
+        message: str = "Loop detected",
+        *,
+        streak: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        self.streak = streak
