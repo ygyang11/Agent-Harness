@@ -39,7 +39,7 @@ from agent_harness.agent.conversational import ConversationalAgent
 from agent_harness.context.context import AgentContext
 from agent_harness.session import BaseSession, SessionState, FileSession, InMemorySession
 
-__version__ = "0.4.8"
+__version__ = "0.4.9"
 
 __all__ = [
     # Logging
