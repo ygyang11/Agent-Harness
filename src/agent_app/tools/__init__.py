@@ -15,6 +15,7 @@ from agent_app.tools.paper import PAPER_TOOLS, paper_fetch, paper_search
 from agent_app.tools.pdf_parser import PDF_TOOLS, pdf_parser
 from agent_app.tools.skill import SKILL_TOOLS, skill_tool
 from agent_app.tools.sub_agent import SUB_AGENT_TOOLS, sub_agent
+from agent_app.tools.background import BACKGROUND_TOOLS, background_task
 from agent_app.tools.memory import MEMORY_TOOLS, memory_tool
 from agent_app.tools.terminal import TERMINAL_TOOLS, terminal_tool
 from agent_app.tools.todo_write import TODO_TOOLS, todo_write
@@ -30,6 +31,7 @@ BUILTIN_TOOLS: list[BaseTool] = [
     *SKILL_TOOLS,
     *TODO_TOOLS,
     *SUB_AGENT_TOOLS,
+    *BACKGROUND_TOOLS,
     *FILESYSTEM_TOOLS,
 ]
 
@@ -46,6 +48,8 @@ __all__ = [
     "SKILL_TOOLS",
     "TODO_TOOLS",
     "SUB_AGENT_TOOLS",
+    "MEMORY_TOOLS",
+    "BACKGROUND_TOOLS",
     # Individual tools
     "terminal_tool",
     "web_fetch",
@@ -53,7 +57,7 @@ __all__ = [
     "pdf_parser",
     "paper_search",
     "paper_fetch",
-    "MEMORY_TOOLS",
+    "background_task",
     "memory_tool",
     "skill_tool",
     "todo_write",

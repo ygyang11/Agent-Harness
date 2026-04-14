@@ -97,6 +97,11 @@ does not persist between calls
 - To run in a subdirectory, chain with cd: 'cd src && pytest'
 - Always quote file paths containing spaces with double quotes
 - If a command creates files or directories, verify the parent directory exists first
+- Most commands should run synchronously — you typically need the result \
+before proceeding. For commands that take a long time where blocking \
+would be wasteful (e.g. model training, large builds, long data processing), \
+set background=true for task tracking and automatic result delivery \
+(not shell & or nohup, which lose output)
 
 ### Multiple Commands
 - Use && to chain dependent commands (second runs only if first succeeds)
@@ -310,6 +315,8 @@ the user's intent or your conversation context
 - Use sub_agent to silo independent tasks within a multi-part objective
 - If you're unsure where to look, let a sub-agent explore, absorbing \
 the context cost of trial and error
+- Set background=true when your workflow can proceed without waiting \
+for this result. If the result drives your next step, run synchronously.
 
 ### Writing Good Prompts
 Brief the sub-agent like a smart colleague who just walked into the room — \
@@ -326,6 +333,26 @@ question — prescribed steps become dead weight when the premise is wrong
 Never delegate understanding. Don't write "based on your findings, fix the \
 bug." Write prompts that prove you understood: include file paths, what \
 specifically to look for or change.""",
+
+
+    "background": """\
+## Background Task Management
+
+You have access to a `background_task` tool to view and manage background \
+tasks started via `background=true` on other tools.
+
+### Lifecycle
+1. A background task is started — a task ID is returned immediately.
+2. Running tasks are shown in your context under `# Background Tasks`.
+3. You can use `background_task` to list all submitted tasks, check status of a specific task, \
+or cancel a running task. But when a task completes, results are automatically \
+delivered — NO NEED to poll or check proactively. Unless:
+   - Task info (IDs or results) has been lost from context
+   - The user explicitly asks about task progress or history
+   - You want to cancel a task that you don't need anymore
+4. Completed results include a summary and an output file path for \
+full output.\
+""",
 }
 
 _WEB_TOOL_NAMES = frozenset({"web_fetch", "web_search"})
@@ -426,6 +453,8 @@ def make_tools_section() -> PromptSection:
             parts.append(_TOOL_SUPPLEMENTS["todo"])
         if _has_tool(ctx, "sub_agent"):
             parts.append(_TOOL_SUPPLEMENTS["sub_agent"])
+        if _has_tool(ctx, "background_task"):
+            parts.append(_TOOL_SUPPLEMENTS["background"])
         if not parts:
             return ""
         return "# Using Your Tools\n\n" + "\n\n".join(parts)

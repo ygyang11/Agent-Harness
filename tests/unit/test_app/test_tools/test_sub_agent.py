@@ -21,13 +21,15 @@ from agent_harness.hooks.base import DefaultHooks
 # ── Helpers ──
 
 
-def _make_mock_tools(names: list[str]) -> list[MagicMock]:
-    tools = []
-    for n in names:
-        t = MagicMock()
-        t.name = n
-        tools.append(t)
-    return tools
+class _MockTool:
+    """Minimal mock tool that does NOT match AgentAware protocol."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def _make_mock_tools(names: list[str]) -> list[_MockTool]:
+    return [_MockTool(n) for n in names]
 
 
 def _make_bound_tool(

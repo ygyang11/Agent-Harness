@@ -96,10 +96,15 @@ class _MessageGroup:
 
     @property
     def is_protected_system(self) -> bool:
-        """Agent identity prompt — never compressed."""
+        """Agent identity prompt — never compressed.
+        Compression summaries and background results are NOT protected."""
         if not self.is_system:
             return False
-        return not self.messages[0].metadata.get("is_compression_summary", False)
+        meta = self.messages[0].metadata
+        return (
+            not meta.get("is_compression_summary", False)
+            and not meta.get("is_background_result", False)
+        )
 
 
 @dataclass(slots=True)

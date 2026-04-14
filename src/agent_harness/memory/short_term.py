@@ -81,7 +81,9 @@ class ShortTermMemory(BaseMemory):
                     exc_info=True,
                 )
 
-        self._trim_by_tokens()
+        self._messages = ShortTermMemory._trim_by_tokens(
+            self._messages, self.max_tokens, self.model
+        )
         return list(self._messages)
 
     async def clear(self) -> None:
@@ -114,28 +116,31 @@ class ShortTermMemory(BaseMemory):
     async def size(self) -> int:
         return len(self._messages)
 
-    def _trim_by_tokens(self) -> None:
-        """Keep system messages + most recent atomic groups within token budget.
+    @staticmethod
+    def _trim_by_tokens(
+        messages: list[Message], max_tokens: int, model: str
+    ) -> list[Message]:
+        """Keep protected system messages + most recent atomic groups within budget.
 
         Uses atomic grouping to avoid splitting tool_call + tool_result pairs.
-        Only trims when total tokens exceed max_tokens.
+        Background results and compression summaries are NOT protected.
         """
         from agent_harness.memory.compressor import ContextCompressor
 
-        current = count_messages_tokens(self._messages, self.model)
-        if current <= self.max_tokens:
-            return
+        current = count_messages_tokens(messages, model)
+        if current <= max_tokens:
+            return messages
 
-        groups = ContextCompressor._group_atomic_pairs(self._messages)
-        system_groups = [g for g in groups if g.is_system]
-        non_system_groups = [g for g in groups if not g.is_system]
+        groups = ContextCompressor._group_atomic_pairs(messages)
+        system_groups = [g for g in groups if g.is_protected_system]
+        non_system_groups = [g for g in groups if not g.is_protected_system]
 
         system_msgs = [m for g in system_groups for m in g.messages]
-        budget = self.max_tokens - count_messages_tokens(system_msgs, self.model)
+        budget = max_tokens - count_messages_tokens(system_msgs, model)
         kept_groups: list[list[Message]] = []
 
         for group in reversed(non_system_groups):
-            group_tokens = count_messages_tokens(group.messages, self.model)
+            group_tokens = count_messages_tokens(group.messages, model)
             if budget - group_tokens < 0:
                 break
             kept_groups.append(group.messages)
@@ -143,4 +148,4 @@ class ShortTermMemory(BaseMemory):
 
         kept_groups.reverse()
         kept_msgs = [m for group in kept_groups for m in group]
-        self._messages = system_msgs + kept_msgs
+        return system_msgs + kept_msgs

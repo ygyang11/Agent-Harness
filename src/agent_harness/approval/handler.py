@@ -1,7 +1,6 @@
 """Approval handlers — abstract interface and stdin default implementation."""
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 from abc import ABC, abstractmethod
@@ -47,8 +46,9 @@ class StdinApprovalHandler(ApprovalHandler):
         self._output.write(f"  Allow? [Y]es / {label} / [N]o <reason> (default: Y): ")
         self._output.flush()
 
-        loop = asyncio.get_running_loop()
-        raw: str = await loop.run_in_executor(None, input)
+        from agent_harness.utils.input_mux import mux_input
+
+        raw: str = await mux_input("", priority=10)
         choice = raw.strip().lower()
 
         reason: str | None = None

@@ -12,7 +12,6 @@ from agent_harness.core.event import EventBus
 from agent_harness.core.message import Message, Role
 from agent_harness.memory.short_term import ShortTermMemory
 from agent_harness.memory.working_term import WorkingMemory
-from agent_harness.utils.token_counter import count_messages_tokens
 
 if TYPE_CHECKING:
     from agent_harness.memory.compressor import ContextCompressor
@@ -233,27 +232,11 @@ class AgentContext:
 
         messages = patch_dangling_tool_calls(messages)
 
-        # Final token budget guard after all injections (atomic-group aware)
-        max_tokens = self.config.memory.max_tokens
-        total = count_messages_tokens(messages, self.config.llm.model)
-        if total > max_tokens:
-            from agent_harness.memory.compressor import ContextCompressor
+        # Final token budget guard after all injections
+        from agent_harness.memory.short_term import ShortTermMemory
 
-            groups = ContextCompressor._group_atomic_pairs(messages)
-            system_groups = [g for g in groups if g.is_system]
-            non_system_groups = [g for g in groups if not g.is_system]
-
-            system_msgs = [m for g in system_groups for m in g.messages]
-            budget = max_tokens - count_messages_tokens(system_msgs, self.config.llm.model)
-            kept_groups: list[list[Message]] = []
-            for group in reversed(non_system_groups):
-                cost = count_messages_tokens(group.messages, self.config.llm.model)
-                if budget - cost < 0:
-                    break
-                kept_groups.append(group.messages)
-                budget -= cost
-            kept_groups.reverse()
-            kept = [m for group in kept_groups for m in group]
-            messages = system_msgs + kept
+        messages = ShortTermMemory._trim_by_tokens(
+            messages, self.config.memory.max_tokens, self.config.llm.model
+        )
 
         return messages

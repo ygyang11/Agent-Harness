@@ -17,13 +17,17 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent_app.tools import (
-    FILESYSTEM_TOOLS, TERMINAL_TOOLS, WEB_TOOLS, TODO_TOOLS, SUB_AGENT_TOOLS,
+    BACKGROUND_TOOLS, FILESYSTEM_TOOLS, TERMINAL_TOOLS, WEB_TOOLS,
+    TODO_TOOLS, SUB_AGENT_TOOLS,
 )
 from agent_harness import HarnessConfig, ReActAgent
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-ALL_TOOLS = [*FILESYSTEM_TOOLS, *TERMINAL_TOOLS, *WEB_TOOLS, *TODO_TOOLS, *SUB_AGENT_TOOLS]
+ALL_TOOLS = [
+    *FILESYSTEM_TOOLS, *TERMINAL_TOOLS, *WEB_TOOLS,
+    *TODO_TOOLS, *SUB_AGENT_TOOLS, *BACKGROUND_TOOLS,
+]
 
 SYSTEM_PROMPT = (
     "You are a skilled Python developer. "
@@ -178,7 +182,7 @@ async def run_chat(config: HarnessConfig, workspace: Path) -> None:
     """Chat mode: interact with the coding agent."""
     print("=== Coding Agent Demo (interactive) ===")
     print(f"Workspace: {workspace}")
-    print("Tools: filesystem + terminal + web_search + web_fetch + todo_write + sub_agent")
+    print("Tools: filesystem + terminal + web + todo + sub_agent + background")
     print("Type 'exit' to quit.\n")
 
     agent = ReActAgent(

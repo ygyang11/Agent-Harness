@@ -97,14 +97,15 @@ _BUILTIN_TYPES: dict[str, dict[str, Any]] = {
             "Guidelines:\n"
             "- Don't add features or make improvements beyond what was asked\n"
             "- Be careful not to introduce security vulnerabilities\n"
-            "- Stay focused on the task scope — do not expand beyond the stated objective\n\n"
+            "- Stay focused on the task scope — do not expand beyond the stated objective\n"
+            "- MUST NOT run tools in background mode (background=true)\n\n"
             "When you complete the task, respond with a concise report covering "
             "what was done and any key findings."
         ),
     },
 }
 
-_ALWAYS_EXCLUDE = frozenset({"sub_agent", "todo_write", "skill_tool"})
+_ALWAYS_EXCLUDE = frozenset({"sub_agent", "todo_write", "skill_tool", "background_task"})
 
 # ── Tool Description Template ──
 
@@ -123,6 +124,8 @@ Specify exactly what information the sub-agent should return.
 2. You can launch multiple sub-agents concurrently to maximize performance by calling sub_agent \
 multiple times in a single turn.
 3. The sub-agent's outputs should generally be trusted.
+4. Set background=true when your workflow can proceed without waiting \
+for this result.
 
 ## Examples
 
@@ -184,6 +187,20 @@ only the outcome matters. Use general when the task requires file \
 modifications or command execution, the scope is well-defined, and \
 you don't need the intermediate details in your context. If the task is small or you need the details in your own context \
 for subsequent work, do it yourself instead.
+</commentary>
+</example>
+
+<example>
+User: "Analyze our competitor's open-source project and then refactor \
+our codebase following their best practices."
+Assistant: *Launches a research sub-agent in background to analyze \
+the competitor's codebase, then starts reading our own codebase to \
+understand the current structure*
+<commentary>
+The analysis will take many steps exploring an external codebase. \
+Meanwhile the agent can begin reading our own code — work that \
+doesn't depend on the analysis result. When the background research \
+completes, the agent combines both to plan the refactoring.
 </commentary>
 </example>
 
@@ -274,6 +291,14 @@ class SubAgentTool(BaseTool):
                         "enum": type_enum,
                         "description": "Select one of the available agent types listed above.",
                     },
+                    "background": {
+                        "type": "boolean",
+                        "description": (
+                            "Run in background. Returns a task ID immediately; "
+                            "results are delivered automatically when complete."
+                        ),
+                        "default": False,
+                    },
                 },
                 "required": ["description", "prompt", "agent_type"],
             },
@@ -291,6 +316,7 @@ class SubAgentTool(BaseTool):
         description = kwargs.get("description", "")
         prompt = kwargs.get("prompt", "")
         agent_type = kwargs.get("agent_type", "")
+        background = kwargs.get("background", False)
 
         if not description.strip():
             raise ToolValidationError("'description' is required and cannot be empty.")
@@ -316,57 +342,109 @@ class SubAgentTool(BaseTool):
 
         max_steps = self._agent.context.config.sub_agent.max_steps
 
+        from agent_harness.agent.react import ReActAgent
+
+        child = ReActAgent(
+            name=subagent_name,
+            llm=self._agent.llm,
+            tools=tools,
+            context=self._agent.context.fork(f"sub.{agent_type}.{seq}"),
+            hooks=self._agent.hooks,
+            max_steps=max_steps,
+            stream=False if background else self._agent._stream,
+            approval=self._agent._approval,
+            approval_handler=self._agent._approval_handler,
+            prompt_builder=prompt_builder,
+        )
+
         await self._agent.hooks.on_subagent_start(
             parent_name, subagent_name, agent_type, description, prompt,
         )
 
-        start_time = time.monotonic()
-        _result_steps = 0
-        _result_tool_calls = 0
-
-        token = _subagent_active.set(True)
-
-        try:
-            from agent_harness.agent.react import ReActAgent
-
-            child = ReActAgent(
-                name=subagent_name,
-                llm=self._agent.llm,
-                tools=tools,
-                context=self._agent.context.fork(f"sub.{agent_type}.{seq}"),
-                hooks=self._agent.hooks,
-                max_steps=max_steps,
-                stream=self._agent._stream,
-                approval=self._agent._approval,
-                approval_handler=self._agent._approval_handler,
-                prompt_builder=prompt_builder,
+        if background:
+            return self._start_background(
+                child, description, prompt, agent_type, subagent_name,
             )
 
-            result = await child.run(prompt)
-
-            _result_steps = result.step_count
-            tool_usage = self._extract_tool_usage(result)
-            _result_tool_calls = sum(tool_usage.values())
+        # Synchronous path
+        try:
+            result, tool_usage, elapsed_ms = await self._run_child(
+                child, prompt, parent_name, subagent_name, agent_type, description,
+            )
             return self._format_result(
                 output=result.output,
                 steps=result.step_count,
                 tool_usage=tool_usage,
-                duration_ms=(time.monotonic() - start_time) * 1000,
+                duration_ms=elapsed_ms,
             )
-
         except Exception as e:
             raise ToolExecutionError(
                 f"Sub-agent '{subagent_name}' failed: {e}"
             ) from e
 
+    def _start_background(
+        self,
+        child: Any,
+        description: str,
+        prompt: str,
+        agent_type: str,
+        subagent_name: str,
+    ) -> str:
+        from agent_harness.utils.token_counter import truncate_text_by_tokens
+
+        parent_name = self._agent.name
+
+        async def work() -> tuple[str, str]:
+            result, tool_usage, _ = await self._run_child(
+                child, prompt, parent_name, subagent_name, agent_type, description,
+            )
+            result_preview = truncate_text_by_tokens(
+                result.output, max_tokens=100, suffix="..."
+            )
+            summary = (
+                f"Completed in {result.step_count} steps, "
+                f"{sum(tool_usage.values())} tool calls.\n"
+                f"Result: {result_preview}"
+            )
+            return result.output, summary
+
+        desc = truncate_text_by_tokens(description, max_tokens=12, suffix="...")
+        task_id = self._agent._bg_manager.spawn(
+            tool_name="sub_agent",
+            description=desc,
+            coro=work(),
+        )
+        return f"Background sub-agent {task_id} started ({agent_type}): {description}"
+
+    async def _run_child(
+        self,
+        child: Any,
+        prompt: str,
+        parent_name: str,
+        subagent_name: str,
+        agent_type: str,
+        description: str,
+    ) -> tuple[Any, dict[str, int], float]:
+        """Run child agent with hooks and progress tracking."""
+        from agent_harness.hooks.progress import _subagent_active
+
+        start_time = time.monotonic()
+        _steps = 0
+        _tool_calls = 0
+        token = _subagent_active.set(True)
+        try:
+            result = await child.run(prompt)
+            _steps = result.step_count
+            tool_usage = self._extract_tool_usage(result)
+            _tool_calls = sum(tool_usage.values())
+            return result, tool_usage, (time.monotonic() - start_time) * 1000
         finally:
             _subagent_active.reset(token)
-
             elapsed_ms = (time.monotonic() - start_time) * 1000
             try:
                 await self._agent.hooks.on_subagent_end(
                     parent_name, subagent_name, agent_type, description,
-                    _result_steps, _result_tool_calls, elapsed_ms,
+                    _steps, _tool_calls, elapsed_ms,
                 )
             except Exception:
                 pass
@@ -389,9 +467,8 @@ class SubAgentTool(BaseTool):
         tool_names = type_spec.get("tools", [])
 
         if tool_names == "__inherit__":
-            return [t for t in parent_tools if t.name not in _ALWAYS_EXCLUDE]
-
-        if not tool_names:
+            filtered = [t for t in parent_tools if t.name not in _ALWAYS_EXCLUDE]
+        elif not tool_names:
             logger.warning(
                 "Sub-agent type '%s' has no tools configured. "
                 "The sub-agent will run without any tools. "
@@ -399,9 +476,24 @@ class SubAgentTool(BaseTool):
                 agent_type,
             )
             return []
+        else:
+            allowed = set(tool_names) - _ALWAYS_EXCLUDE
+            filtered = [t for t in parent_tools if t.name in allowed]
 
-        allowed = set(tool_names) - _ALWAYS_EXCLUDE
-        return [t for t in parent_tools if t.name in allowed]
+        return self._isolate_agent_aware(filtered)
+
+    @staticmethod
+    def _isolate_agent_aware(tools: list[BaseTool]) -> list[BaseTool]:
+        """Create fresh instances for AgentAware tools to prevent rebind."""
+        from agent_harness.tool.base import AgentAware
+
+        result: list[BaseTool] = []
+        for t in tools:
+            if isinstance(t, AgentAware):
+                result.append(t.__class__())
+            else:
+                result.append(t)
+        return result
 
     def _build_subagent_prompt_builder(self, agent_type: str) -> SystemPromptBuilder:
         from agent_harness.prompt.sections import make_intro_section

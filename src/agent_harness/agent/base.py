@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from agent_harness.background import BackgroundTask
     from agent_harness.prompt.system_builder import SystemPromptBuilder
     from agent_harness.session.base import BaseSession
 
@@ -157,6 +158,11 @@ class BaseAgent(ABC, EventEmitter):
         self._loop_detector = LoopDetector()
         self._pending_loop_warning: Message | None = None
 
+        # Background task manager
+        from agent_harness.background import BackgroundTaskManager
+
+        self._bg_manager = BackgroundTaskManager()
+
         # Context compression setup
         if (
             self.context.config.memory.strategy == "summarize"
@@ -198,6 +204,29 @@ class BaseAgent(ABC, EventEmitter):
             "skill_loader": skill_loader,
         }
     
+    async def _collect_background_results(self) -> list[Any]:
+        """Harvest completed background tasks and inject results into memory."""
+        completed = self._bg_manager.collect_completed()
+        for task in completed:
+            if task.status == "completed" and task.result:
+                content = (
+                    f"[Background Task Completed] {task.task_id} ({task.tool_name}): "
+                    f"{task.description}\n{task.result.summary}"
+                )
+                if task.result.output_path:
+                    content += f"\nFull output: {task.result.output_path}"
+            elif task.status == "failed":
+                content = (
+                    f"[Background Task Failed] {task.task_id} ({task.tool_name}): "
+                    f"{task.description}\nError: {task.error}"
+                )
+            else:
+                continue
+            await self.context.short_term_memory.add_message(
+                Message.system(content, metadata={"is_background_result": True})
+            )
+        return completed
+
     async def _check_loop(self, tool_calls: list[ToolCall]) -> None:
         """Record tool calls and check for repetitive loop pattern."""
         self._loop_detector.record(tool_calls)
@@ -266,9 +295,11 @@ class BaseAgent(ABC, EventEmitter):
 
         resolved_session: BaseSession | None = resolve_session(session)
 
-        # Propagate session_id to compressor for archive binding
-        if resolved_session and self.context.short_term_memory.compressor:
-            self.context.short_term_memory.compressor.bind_session(resolved_session.session_id)
+        # Propagate session_id to compressor and background manager
+        if resolved_session:
+            if self.context.short_term_memory.compressor:
+                self.context.short_term_memory.compressor.bind_session(resolved_session.session_id)
+            self._bg_manager.bind_session(resolved_session.session_id)
 
         # Reset state for agent reuse (e.g., team orchestration, pipelines)
         if self.context.state.is_terminal:
@@ -317,6 +348,9 @@ class BaseAgent(ABC, EventEmitter):
 
         try:
             for step_num in range(1, self.max_steps + 1):
+                # Harvest completed background tasks
+                await self._collect_background_results()
+
                 await self.hooks.on_step_start(self.name, step_num)
                 await self.emit("agent.step.start", agent=self.name, step=step_num)
 
@@ -380,27 +414,100 @@ class BaseAgent(ABC, EventEmitter):
         prompt: str = "> ",
         exit_commands: tuple[str, ...] = ("exit", "quit", "bye"),
     ) -> None:
-        """Interactive REPL loop. Session is transparently handled by run()."""
+        """Interactive REPL with auto-trigger on background task completion."""
+        import asyncio as _asyncio
         import readline  # noqa: F401 — enables arrow keys, history, proper backspace
+
+        from agent_harness.utils.input_mux import mux_input
 
         if self._approval is not None:
             self._approval.reset_session()
 
-        while True:
-            try:
-                user_input = input(prompt).strip()
-            except (EOFError, KeyboardInterrupt):
-                break
-            if not user_input:
-                continue
-            if user_input.lower() in exit_commands:
-                break
-            try:
-                result = await self.run(user_input, session=session)
-                if not self._stream:
-                    print(result.output)
-            except Exception as e:
-                print(f"Error: {e}")
+        input_task: _asyncio.Task[str] | None = None
+
+        try:
+            while True:
+                # Collect completed background tasks before waiting
+                collected = await self._collect_background_results()
+                if collected:
+                    if input_task and not input_task.done():
+                        input_task.cancel()
+                        input_task = None
+                    print("\n[Background task completed]")
+                    try:
+                        await self.run(
+                            Message.system(
+                                "[Background Task Notification] "
+                                "Process the completed background task results.",
+                                metadata={"is_background_result": True},
+                            ),
+                            session=session,
+                        )
+                    except Exception:
+                        pass
+                    continue
+
+                # Only create new input task if previous one is done
+                if input_task is None or input_task.done():
+                    input_task = _asyncio.create_task(mux_input(prompt, priority=0))
+
+                # Race: user input vs background completion
+                wait_set: set[_asyncio.Task[Any]] = {input_task}
+                bg_wait_task: _asyncio.Task[Any] | None = None
+                if self._bg_manager.has_running():
+                    bg_wait_task = _asyncio.create_task(self._bg_manager.wait_next())
+                    wait_set.add(bg_wait_task)
+
+                done, _ = await _asyncio.wait(
+                    wait_set, return_when=_asyncio.FIRST_COMPLETED
+                )
+
+                # Cancel bg observer if it didn't fire
+                if bg_wait_task and bg_wait_task not in done:
+                    bg_wait_task.cancel()
+
+                if input_task in done:
+                    user_input = input_task.result().strip()
+                    input_task = None
+                    if not user_input:
+                        continue
+                    if user_input.lower() in exit_commands:
+                        break
+                    try:
+                        result = await self.run(user_input, session=session)
+                        if not self._stream:
+                            print(result.output)
+                    except Exception as e:
+                        print(f"Error: {e}")
+
+                elif bg_wait_task and bg_wait_task in done:
+                    if input_task and not input_task.done():
+                        input_task.cancel()
+                        input_task = None
+                    print("\n[Background task completed]")
+                    await self._collect_background_results()
+                    try:
+                        await self.run(
+                            Message.system(
+                                "[Background Task Notification] "
+                                "Process the completed background task results.",
+                                metadata={"is_background_result": True},
+                            ),
+                            session=session,
+                        )
+                    except Exception:
+                        pass
+
+        except (KeyboardInterrupt, EOFError, _asyncio.CancelledError):
+            pass
+
+        # Cleanup: cancel pending input and background tasks
+        if input_task and not input_task.done():
+            input_task.cancel()
+        if self._bg_manager.has_running():
+            count = self._bg_manager.cancel_all()
+            if count:
+                print(f"\nCancelled {count} running background task(s).")
 
     @abstractmethod
     async def step(self) -> StepResult:
