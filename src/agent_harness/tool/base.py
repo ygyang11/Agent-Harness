@@ -5,6 +5,7 @@ Every tool exposes a JSON Schema description for LLM function calling.
 """
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -136,6 +137,25 @@ class BaseTool(ABC):
     def build_context_message(self) -> Message | None:
         """Build ephemeral context for LLM injection. Stateful tools override."""
         return None
+
+    def clone(self) -> BaseTool:
+        """Create an independent copy for per-agent isolation.
+
+        Called by BaseAgent during tool registration. Each agent gets
+        its own tool instance to prevent bind_agent/state pollution.
+
+        Default uses deepcopy with _agent temporarily cleared to avoid
+        copying the entire agent object graph. Override if the tool holds
+        non-copyable resources (connections, locks) or should be shared.
+        """
+        saved = getattr(self, "_agent", None)
+        try:
+            if saved is not None:
+                self._agent = None
+            return copy.deepcopy(self)
+        finally:
+            if saved is not None:
+                self._agent = saved
 
     def __repr__(self) -> str:
         return f"<Tool {self.name}>"

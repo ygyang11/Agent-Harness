@@ -11,6 +11,7 @@ from openai import AsyncOpenAI
 from agent_harness.core.config import HarnessConfig, LLMConfig, resolve_llm_config
 from agent_harness.core.errors import (
     LLMAuthenticationError,
+    LLMConnectionError,
     LLMContextLengthError,
     LLMError,
     LLMRateLimitError,
@@ -66,6 +67,8 @@ class OpenAIProvider(BaseLLM):
             if "context_length" in str(e).lower() or "maximum context" in str(e).lower():
                 raise LLMContextLengthError(str(e)) from e
             raise LLMError(str(e)) from e
+        except openai.APIConnectionError as e:
+            raise LLMConnectionError(str(e)) from e
         except openai.APIError as e:
             raise LLMError(str(e)) from e
 
@@ -149,6 +152,8 @@ class OpenAIProvider(BaseLLM):
             raise LLMRateLimitError(str(e)) from e
         except openai.AuthenticationError as e:
             raise LLMAuthenticationError(str(e)) from e
+        except openai.APIConnectionError as e:
+            raise LLMConnectionError(str(e)) from e
         except openai.APIError as e:
             raise LLMError(str(e)) from e
 

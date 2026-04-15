@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -23,10 +24,11 @@ async def _failing() -> tuple[str, str]:
 
 
 @pytest.fixture
-def manager(tmp_path: Path) -> BackgroundTaskManager:
+async def manager(tmp_path: Path) -> AsyncIterator[BackgroundTaskManager]:
     m = BackgroundTaskManager()
     m._output_dir = str(tmp_path / "bg_output")
-    return m
+    yield m
+    await m.shutdown()
 
 
 # -- Lifecycle --
@@ -240,11 +242,11 @@ class TestSession:
         manager.bind_session("sess_abc")
         assert "sess_abc" in manager._output_dir
 
-    def test_default_isolation_by_pid(self) -> None:
-        import os
-
-        m = BackgroundTaskManager()
-        assert str(os.getpid()) in m._output_dir
+    def test_default_isolation_by_uuid(self) -> None:
+        m1 = BackgroundTaskManager()
+        m2 = BackgroundTaskManager()
+        assert m1._output_dir != m2._output_dir
+        assert m1._output_dir.startswith(BackgroundTaskManager._BASE_OUTPUT_DIR)
 
     def test_bind_same_session_noop(self, manager: BackgroundTaskManager) -> None:
         manager.bind_session("sess_abc")

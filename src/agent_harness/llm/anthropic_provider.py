@@ -11,6 +11,7 @@ from anthropic import AsyncAnthropic
 from agent_harness.core.config import HarnessConfig, LLMConfig, resolve_llm_config
 from agent_harness.core.errors import (
     LLMAuthenticationError,
+    LLMConnectionError,
     LLMContextLengthError,
     LLMError,
     LLMRateLimitError,
@@ -64,6 +65,8 @@ class AnthropicProvider(BaseLLM):
             if "context" in str(e).lower() or "too long" in str(e).lower():
                 raise LLMContextLengthError(str(e)) from e
             raise LLMError(str(e)) from e
+        except anthropic.APIConnectionError as e:
+            raise LLMConnectionError(str(e)) from e
         except anthropic.APIError as e:
             raise LLMError(str(e)) from e
 
@@ -172,6 +175,8 @@ class AnthropicProvider(BaseLLM):
             raise LLMRateLimitError(str(e)) from e
         except anthropic.AuthenticationError as e:
             raise LLMAuthenticationError(str(e)) from e
+        except anthropic.APIConnectionError as e:
+            raise LLMConnectionError(str(e)) from e
         except anthropic.APIError as e:
             raise LLMError(str(e)) from e
 

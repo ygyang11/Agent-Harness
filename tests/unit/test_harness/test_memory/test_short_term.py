@@ -151,18 +151,20 @@ class TestCompressorAttribute:
         for i in range(20):
             await mem.add_message(Message.user(f"message-{i} " * 10))
 
-        with (
-            patch.object(
+        ns_logger = logging.getLogger("agent_harness")
+        ns_logger.addHandler(caplog.handler)
+        try:
+            with patch.object(
                 compressor,
                 "compress",
                 AsyncMock(side_effect=RuntimeError("boom")),
-            ),
-            caplog.at_level(logging.WARNING),
-        ):
-            msgs = await mem.get_context_messages()
+            ):
+                msgs = await mem.get_context_messages()
 
-        assert len(msgs) > 0
-        assert "Context compression failed" in caplog.text
+            assert len(msgs) > 0
+            assert "Context compression failed" in caplog.text
+        finally:
+            ns_logger.removeHandler(caplog.handler)
 
 
 class TestForgetImportanceScore:

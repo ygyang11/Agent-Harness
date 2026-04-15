@@ -318,6 +318,14 @@ class MemoryTool(BaseTool):
         file_path.write_text(file_content, encoding="utf-8")
 
         count = self._update_index(scope, name, description, type_)
+
+        if count < 0:
+            file_path.unlink(missing_ok=True)
+            return (
+                f"Error: memory index has reached the hard limit "
+                f"({_INDEX_HARD_LIMIT} entries). Delete unused memories to free space."
+            )
+
         verb = "updated" if is_update else "saved"
         result = f"Memory {verb}: [{name}]({type_}/{name}.md) — {description} (scope={scope})"
 
@@ -368,7 +376,7 @@ class MemoryTool(BaseTool):
         if not replaced:
             total = sum(len(e) for e in sections.values())
             if total >= _INDEX_HARD_LIMIT:
-                return total
+                return -1
             type_entries.append(new_entry)
 
         sections[type_] = type_entries

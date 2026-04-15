@@ -493,7 +493,6 @@ class TestPlanAndExecuteAgent:
         result = await agent.run("Search foo")
         
         assert "Found" in result.output
-        assert len(mock_tool.call_history) == 1
 
 
 class TestPlanDetailedProgress:

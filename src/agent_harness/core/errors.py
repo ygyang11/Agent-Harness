@@ -26,6 +26,9 @@ class LLMRateLimitError(LLMError):
         super().__init__(message, **kwargs)
         self.retry_after = retry_after
 
+class LLMConnectionError(LLMError):
+    """Provider connection/transport failure. Retryable."""
+
 class LLMAuthenticationError(LLMError):
     """Invalid or missing API credentials."""
 

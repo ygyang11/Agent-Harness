@@ -124,6 +124,7 @@ class PlanAndExecuteAgent(BaseAgent):
                 approval_handler=self._executor_approval_handler,
                 prompt_builder=self._prompt_builder.fork(),
             )
+            executor._sandbox = self._sandbox
             replanner = ReplannerAgent(
                 name=f"{self.name}.replanner",
                 llm=self.llm,

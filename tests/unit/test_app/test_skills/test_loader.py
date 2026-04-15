@@ -149,6 +149,10 @@ class TestSkillLoaderNameCollisionWarning:
             (sd / "SKILL.md").write_text(
                 "---\nname: dup\ndescription: duplicate\n---\n\nbody\n"
             )
-        with caplog.at_level(logging.WARNING, logger="agent_app.skills.loader"):
+        ns_logger = logging.getLogger("agent_app")
+        ns_logger.addHandler(caplog.handler)
+        try:
             SkillLoader([dir_a, dir_b])
-        assert any("shadows" in record.message for record in caplog.records)
+            assert any("shadows" in record.message for record in caplog.records)
+        finally:
+            ns_logger.removeHandler(caplog.handler)

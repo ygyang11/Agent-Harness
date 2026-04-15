@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shutil
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -51,7 +51,7 @@ class BackgroundTaskManager:
 
     def __init__(self) -> None:
         self._tasks: dict[str, BackgroundTask] = {}
-        self._output_dir = f"{self._BASE_OUTPUT_DIR}/{os.getpid()}"
+        self._output_dir = f"{self._BASE_OUTPUT_DIR}/{uuid.uuid4().hex[:8]}"
         self._cleanup_output_dir()
 
     def bind_session(self, session_id: str) -> None:
@@ -99,6 +99,7 @@ class BackgroundTaskManager:
             logger.info("Background task %s completed", task_id)
             return task.result
         except asyncio.CancelledError:
+            coro.close()
             task.status = "cancelled"
             logger.info("Background task %s cancelled", task_id)
             raise
@@ -158,6 +159,17 @@ class BackgroundTaskManager:
                 task.status = "cancelled"
                 count += 1
         return count
+
+    async def shutdown(self) -> None:
+        """Cancel all incomplete tasks and wait for them to finish."""
+        tasks_to_wait: list[asyncio.Task[BackgroundResult]] = []
+        for task in self._tasks.values():
+            if task.asyncio_task and not task.asyncio_task.done():
+                task.asyncio_task.cancel()
+                task.status = "cancelled"
+                tasks_to_wait.append(task.asyncio_task)
+        if tasks_to_wait:
+            await asyncio.gather(*tasks_to_wait, return_exceptions=True)
 
     def get_running_summary(self) -> str | None:
         """Build brief status summary for LLM context (running tasks only)."""

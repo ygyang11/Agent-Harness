@@ -1,4 +1,4 @@
-"""Global logging configuration for agent_harness."""
+"""Logging configuration for agent_harness framework."""
 from __future__ import annotations
 
 import logging
@@ -7,16 +7,12 @@ _configured = False
 
 
 def setup_logging(level: str = "INFO") -> None:
-    """Configure logging for the agent_harness framework.
+    """Configure logging for the agent_harness and agent_app namespaces.
 
-    Sets up a root logger with a formatter that includes timestamp, level,
-    module name, line number, and message.  Third-party libraries (openai,
-    httpx, urllib3) are silenced to WARNING to reduce noise.
+    Only touches loggers under 'agent_harness.*' and 'agent_app.*'.
+    Does NOT modify the root logger or other libraries' loggers.
 
     Can be called multiple times to change the level.
-
-    Args:
-        level: Logging level name (DEBUG, INFO, WARNING, ERROR, CRITICAL).
     """
     global _configured
 
@@ -31,14 +27,16 @@ def setup_logging(level: str = "INFO") -> None:
             )
         )
 
-        root = logging.getLogger()
-        root.addHandler(handler)
-        root.setLevel(numeric_level)
+        for name in ("agent_harness", "agent_app"):
+            ns_logger = logging.getLogger(name)
+            ns_logger.addHandler(handler)
+            ns_logger.setLevel(numeric_level)
+            ns_logger.propagate = False
 
-        # Suppress noisy third-party loggers
         for name in ("openai", "httpx", "urllib3", "httpcore", "docker"):
             logging.getLogger(name).setLevel(logging.WARNING)
 
         _configured = True
     else:
-        logging.getLogger().setLevel(numeric_level)
+        for name in ("agent_harness", "agent_app"):
+            logging.getLogger(name).setLevel(numeric_level)

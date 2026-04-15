@@ -73,9 +73,10 @@ class TestReActToolUsage:
         assert "answer is X" in result.steps[1].response
         assert result.output == "Based on the search: the answer is X."
 
-        # Tool was actually called
-        assert len(mock_tool.call_history) == 1
-        assert mock_tool.call_history[0] == {"query": "search this"}
+        # Tool was actually called (check cloned instance in registry)
+        registered = agent.tool_registry.get("mock_tool")
+        assert len(registered.call_history) == 1
+        assert registered.call_history[0] == {"query": "search this"}
 
 
 class TestReActMaxSteps:

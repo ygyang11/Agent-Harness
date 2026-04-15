@@ -4,6 +4,19 @@ from typing import Any, AsyncIterator
 
 import pytest
 
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption("--run-e2e", action="store_true", default=False, help="Run e2e tests")
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if config.getoption("--run-e2e", default=False):
+        return
+    skip_e2e = pytest.mark.skip(reason="e2e test — pass --run-e2e to run")
+    for item in items:
+        if "e2e" in item.keywords:
+            item.add_marker(skip_e2e)
+
 from agent_harness.core.config import HarnessConfig, LLMConfig
 from agent_harness.core.message import Message, MessageChunk, Role, ToolCall
 from agent_harness.llm.base import BaseLLM

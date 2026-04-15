@@ -129,9 +129,10 @@ class BaseAgent(ABC, EventEmitter):
 
         self.tool_registry = ToolRegistry()
         for t in tools or []:
-            self.tool_registry.register(t)
-            if isinstance(t, AgentAware):
-                t.bind_agent(self)
+            tool = t.clone()
+            self.tool_registry.register(tool)
+            if isinstance(tool, AgentAware):
+                tool.bind_agent(self)
         self.tool_executor = ToolExecutor(
             self.tool_registry,
             config=self.context.config,
@@ -515,6 +516,7 @@ class BaseAgent(ABC, EventEmitter):
             count = self._bg_manager.cancel_all()
             if count:
                 print(f"\nCancelled {count} running background task(s).")
+        await self._bg_manager.shutdown()
 
     @abstractmethod
     async def step(self) -> StepResult:

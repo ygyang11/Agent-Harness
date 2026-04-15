@@ -386,7 +386,8 @@ class TestApprovalIntegration:
         agent = ReActAgent(name="test", llm=llm, tools=[tool], system_prompt="")
         result = await agent.run("go")
         assert result.output == "done"
-        assert len(tool.call_history) == 1
+        registered = agent.tool_registry.get("mock_tool")
+        assert len(registered.call_history) == 1
 
     @pytest.mark.asyncio
     async def test_deny_returns_error_result(self) -> None:
@@ -428,7 +429,8 @@ class TestApprovalIntegration:
         result = await agent.run("go")
 
         assert result.output == "done"
-        assert len(tool.call_history) == 2
+        registered = agent.tool_registry.get("mock_tool")
+        assert len(registered.call_history) == 2
         assert handler.call_count == 1  # Second call was auto-approved
 
     @pytest.mark.asyncio
@@ -450,7 +452,8 @@ class TestApprovalIntegration:
         await agent.run("go")
 
         assert handler.call_count == 0
-        assert len(tool.call_history) == 1
+        registered = agent.tool_registry.get("mock_tool")
+        assert len(registered.call_history) == 1
 
     @pytest.mark.asyncio
     async def test_always_deny_blocks_without_handler(self) -> None:
@@ -519,4 +522,5 @@ class TestApprovalIntegration:
         assert agent._approval is not None
         result = await agent.run("go")
         assert result.output == "done"
-        assert len(tool.call_history) == 1
+        registered = agent.tool_registry.get("mock_tool")
+        assert len(registered.call_history) == 1

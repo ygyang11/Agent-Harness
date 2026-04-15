@@ -30,7 +30,7 @@ from agent_harness.core.config import (
     TracingConfig,
 )
 from agent_harness.core.event import Event, EventBus
-from agent_harness.core.errors import HarnessError
+from agent_harness.core.errors import HarnessError, LLMConnectionError
 from agent_harness.llm.base import BaseLLM
 from agent_harness.tool.base import BaseTool, ToolSchema
 from agent_harness.tool.decorator import tool
@@ -76,6 +76,7 @@ __all__ = [
     "Event",
     "EventBus",
     "HarnessError",
+    "LLMConnectionError",
     # LLM
     "BaseLLM",
     # Tool

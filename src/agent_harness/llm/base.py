@@ -9,7 +9,7 @@ from collections import deque
 from typing import Any, AsyncIterator, Callable, Coroutine, TypeVar
 
 from agent_harness.core.config import LLMConfig
-from agent_harness.core.errors import LLMError, LLMRateLimitError
+from agent_harness.core.errors import LLMConnectionError, LLMError, LLMRateLimitError
 from agent_harness.core.event import EventEmitter
 from agent_harness.core.message import Message, ToolCall
 from agent_harness.llm.types import FinishReason, LLMResponse, StreamDelta, Usage
@@ -230,7 +230,7 @@ class BaseLLM(ABC, EventEmitter):
                     model=self.model_name,
                 )
 
-            except (LLMRateLimitError, ConnectionError, TimeoutError) as e:
+            except (LLMRateLimitError, LLMConnectionError, ConnectionError, TimeoutError) as e:
                 if attempt >= max_retries:
                     raise
                 wait = delay * (2 ** attempt)
@@ -252,7 +252,7 @@ class BaseLLM(ABC, EventEmitter):
         for attempt in range(max_retries + 1):
             try:
                 return await call()
-            except (LLMRateLimitError, ConnectionError, TimeoutError) as e:
+            except (LLMRateLimitError, LLMConnectionError, ConnectionError, TimeoutError) as e:
                 if attempt >= max_retries:
                     raise
                 wait = delay * (2 ** attempt)

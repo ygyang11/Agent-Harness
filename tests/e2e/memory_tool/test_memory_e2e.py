@@ -8,6 +8,10 @@ Scenarios: mixed, research, noise, all
 from __future__ import annotations
 
 import asyncio
+
+import pytest
+
+pytestmark = pytest.mark.e2e
 import json
 import shutil
 import sys
