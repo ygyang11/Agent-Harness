@@ -356,6 +356,8 @@ class SubAgentTool(BaseTool):
             approval_handler=self._agent._approval_handler,
             prompt_builder=prompt_builder,
         )
+        # Share parent's sandbox (child reuses the same container / backend)
+        child._sandbox = self._agent._sandbox
 
         await self._agent.hooks.on_subagent_start(
             parent_name, subagent_name, agent_type, description, prompt,

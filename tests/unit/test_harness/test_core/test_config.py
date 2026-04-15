@@ -9,6 +9,7 @@ from agent_harness.core.config import (
     LLMConfig,
     MemoryConfig,
     PaperConfig,
+    SandboxConfig,
     SearchConfig,
     ToolConfig,
     TracingConfig,
@@ -59,7 +60,40 @@ class TestToolConfig:
         cfg = ToolConfig()
         assert cfg.max_concurrency == 5
         assert cfg.default_timeout == 30.0
-        assert cfg.sandbox_enabled is False
+        assert cfg.sandbox.enabled is False
+
+
+class TestSandboxConfig:
+    def test_defaults(self) -> None:
+        cfg = SandboxConfig()
+        assert cfg.enabled is False
+        assert cfg.docker.image == "python:3.11-slim"
+        assert cfg.docker.network == "none"
+        assert cfg.docker.setup == ""
+        assert cfg.docker.setup_timeout == 300
+        assert cfg.docker.volumes == []
+
+    def test_nested_in_tool_config(self) -> None:
+        cfg = ToolConfig()
+        assert isinstance(cfg.sandbox, SandboxConfig)
+        assert cfg.sandbox.enabled is False
+
+    def test_from_dict(self) -> None:
+        data = {
+            "enabled": True,
+            "docker": {
+                "image": "ubuntu:22.04",
+                "network": "bridge",
+                "memory": "1g",
+                "cpus": 2.0,
+                "volumes": ["/data:/data:ro"],
+            },
+        }
+        cfg = SandboxConfig.model_validate(data)
+        assert cfg.enabled is True
+        assert cfg.docker.image == "ubuntu:22.04"
+        assert cfg.docker.cpus == 2.0
+        assert cfg.docker.volumes == ["/data:/data:ro"]
 
 
 class TestMemoryConfig:

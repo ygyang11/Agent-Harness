@@ -2,21 +2,15 @@
 
 Security model — three layers:
 - Layer 1 (Permission): ApprovalPolicy decides if execution is allowed
-- Layer 2 (Sandbox): Not implemented yet (Phase 3)
+- Layer 2 (Sandbox): Pluggable backend for execution isolation
 - Layer 3 (Tool): Pure execution — no command filtering
 
-The tool layer handles:
-- Timeout enforcement and subprocess cleanup
-- Output normalization and truncation
-- Optional background execution
-
-Commands run from the workspace root with full system access.
-Security is enforced by ApprovalPolicy, not by the tool layer.
+Commands run from the workspace root. The sandbox backend determines
+the execution environment (host subprocess or container).
 """
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -62,47 +56,6 @@ TERMINAL_TOOL_DESCRIPTION = (
 
 def _workspace_root() -> Path:
     return Path.cwd().resolve()
-
-
-async def _execute_command(
-    command: str,
-    cwd: Path,
-    timeout: int,
-) -> tuple[int | None, str]:
-    """Execute a shell command and return (exit_code, normalized_output)."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "bash",
-            "-c",
-            command,
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        await proc.wait()
-        return None, f"Error: execution timed out after {timeout}s"
-    except Exception as exc:  # noqa: BLE001
-        return None, f"Error: failed to execute command: {exc}"
-
-    stdout_text = stdout.decode(errors="replace")
-    stderr_text = stderr.decode(errors="replace")
-    merged = stdout_text if not stderr_text else f"{stdout_text}\n{stderr_text}".strip()
-
-    if not merged:
-        return proc.returncode, ""
-
-    output = truncate_text_by_tokens(
-        merged,
-        max_tokens=_MAX_OUTPUT_TOKENS,
-        suffix="\n... (truncated)",
-    )
-    return proc.returncode, output
 
 
 class TerminalTool(BaseTool):
@@ -171,38 +124,39 @@ class TerminalTool(BaseTool):
 
         timeout = min(timeout, _MAX_TIMEOUT)
 
-        exit_code, output = await _execute_command(command, _workspace_root(), timeout)
+        result = await self._agent._sandbox.execute(
+            command, timeout=timeout, workdir=str(_workspace_root()),
+        )
+        exit_code = result.exit_code
+
+        output = result.stdout
+        if result.stderr:
+            output = f"{output}\n{result.stderr}".strip() if output else result.stderr
+        if output:
+            output = truncate_text_by_tokens(
+                output, max_tokens=_MAX_OUTPUT_TOKENS, suffix="\n... (truncated)",
+            )
+
         if exit_code is None:
-            return output
+            return f"[exit code N/A]\n{output}".rstrip()
         if exit_code != 0:
             return f"[exit code {exit_code}]\n{output}".rstrip()
         return output or "(no output)"
 
     def _start_background(self, command: str, timeout: int) -> str:
+        sandbox = self._agent._sandbox
+
         async def work() -> tuple[str, str]:
-            proc = await asyncio.create_subprocess_exec(
-                "bash", "-c", command,
-                cwd=str(_workspace_root()),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            result = await sandbox.execute(
+                command, timeout=timeout, workdir=str(_workspace_root()),
             )
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout
-                )
-            except (TimeoutError, asyncio.CancelledError):
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-                await proc.wait()
-                raise
-            full_output = stdout.decode(errors="replace")
-            if stderr:
-                full_output += "\n" + stderr.decode(errors="replace")
-            full_output = full_output.strip()
-            summary = _build_terminal_summary(proc.returncode, full_output)
-            return full_output, summary
+            if result.exit_code is None:
+                raise RuntimeError(result.stdout)
+            output = result.stdout
+            if result.stderr:
+                output = f"{output}\n{result.stderr}".strip() if output else result.stderr
+            summary = _build_terminal_summary(result.exit_code, output)
+            return output, summary
 
         desc = truncate_text_by_tokens(command, max_tokens=12, suffix="...")
         task_id = self._agent._bg_manager.spawn(

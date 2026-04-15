@@ -24,7 +24,17 @@ llm:
 tool:
   max_concurrency: 5            # Max parallel tool executions
   default_timeout: 180.0        # Per-tool timeout in seconds
-  sandbox_enabled: false        # Enable sandboxed execution (experimental)
+  sandbox:
+    enabled: false              # Enable sandbox isolation (requires Docker)
+    docker:
+      image: "python:3.11-slim" # Docker image
+      network: "none"           # "none" | "bridge" | "host"
+      setup: ""                 # Command after container creation (e.g. pip install -r requirements.txt)
+      setup_timeout: 300        # Timeout for setup command in seconds
+      memory: ""                # Memory limit (e.g. "512m", empty = unlimited)
+      cpus: 0                   # CPU limit (0 = unlimited)
+      volumes: []               # Additional mounts (e.g. "/data:/data:ro")
+
 
 # --- Memory ---
 memory:
@@ -76,21 +86,16 @@ approval:
     - "web_search"
     # Resource-level: only matching resources auto-allowed
     - "read_file(src/**)"               # Read files under src/
-    - "read_file(tests/**)"             # Read files under tests/
     - "terminal_tool(git *)"            # Git commands
     - "terminal_tool(pytest *)"         # Test commands
     - "terminal_tool(ruff *)"           # Linting
-    - "terminal_tool(mypy *)"           # Type checking
     - "web_fetch(domain:docs.python.org)"  # Python docs
     - "web_fetch(domain:github.com)"       # GitHub
-    - "web_fetch(domain:*.readthedocs.io)" # ReadTheDocs
 
   always_deny:                  # Rules that are always blocked (deny > allow)
     - "terminal_tool(rm -rf *)"         # Destructive removal
     - "terminal_tool(chmod 777 *)"      # Dangerous permissions
-    - "write_file(**/.env*)"            # Secrets files (any depth)
     - "edit_file(**/.env*)"
-    # - "terminal_tool"                 # Uncomment to fully block terminal access
 
 # --- Sub-Agent ---
 sub_agent:

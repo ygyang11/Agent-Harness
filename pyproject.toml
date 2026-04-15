@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-harness"
-version = "0.4.9"
+version = "0.4.10"
 description = "A complete, extensible agent framework for building AI agents and multi-agent systems"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,6 +30,9 @@ dependencies = [
 search = [
     "tavily-python>=0.3",
     "google-search-results>=2.4",
+]
+sandbox = [
+    "docker>=7.0,<8.0",
 ]
 dev = [
     "pytest>=8.0",

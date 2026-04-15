@@ -74,12 +74,31 @@ class LLMConfig(BaseModel):
             self.base_url = os.environ.get(_EnvVars.HARNESS_LLM_BASE_URL, "").strip() or None
 
 
+class DockerConfig(BaseModel):
+    """Docker sandbox backend configuration."""
+
+    image: str = "python:3.11-slim"
+    network: str = "none"
+    setup: str = ""
+    setup_timeout: int = 300
+    memory: str = ""
+    cpus: float = 0.0
+    volumes: list[str] = Field(default_factory=list)
+
+
+class SandboxConfig(BaseModel):
+    """Sandbox execution configuration."""
+
+    enabled: bool = False
+    docker: DockerConfig = Field(default_factory=DockerConfig)
+
+
 class ToolConfig(BaseModel):
     """Configuration for the tool execution system."""
 
     max_concurrency: int = 5
     default_timeout: float = 30.0
-    sandbox_enabled: bool = False
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
 
 class CompressionConfig(BaseModel):

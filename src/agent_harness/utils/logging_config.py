@@ -36,7 +36,7 @@ def setup_logging(level: str = "INFO") -> None:
         root.setLevel(numeric_level)
 
         # Suppress noisy third-party loggers
-        for name in ("openai", "httpx", "urllib3", "httpcore"):
+        for name in ("openai", "httpx", "urllib3", "httpcore", "docker"):
             logging.getLogger(name).setLevel(logging.WARNING)
 
         _configured = True

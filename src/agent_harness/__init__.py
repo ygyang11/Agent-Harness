@@ -16,10 +16,12 @@ from agent_harness.approval import (
 from agent_harness.core.message import Message, Role, ToolCall, ToolResult
 from agent_harness.core.config import (
     ApprovalConfig,
+    DockerConfig,
     HarnessConfig,
     LLMConfig,
     MemoryConfig,
     PaperConfig,
+    SandboxConfig,
     SearchConfig,
     SkillConfig,
     SubAgentConfig,
@@ -37,9 +39,10 @@ from agent_harness.agent.react import ReActAgent
 from agent_harness.agent.planner import PlanAgent, PlanAndExecuteAgent
 from agent_harness.agent.conversational import ConversationalAgent
 from agent_harness.context.context import AgentContext
+from agent_harness.sandbox import ExecuteResult, LocalBackend, SandboxBackend, SandboxManager
 from agent_harness.session import BaseSession, SessionState, FileSession, InMemorySession
 
-__version__ = "0.4.9"
+__version__ = "0.4.10"
 
 __all__ = [
     # Logging
@@ -58,9 +61,11 @@ __all__ = [
     "Role",
     "ToolCall",
     "ToolResult",
+    "DockerConfig",
     "HarnessConfig",
     "LLMConfig",
     "MemoryConfig",
+    "SandboxConfig",
     "TracingConfig",
     "ToolConfig",
     "SearchConfig",
@@ -86,6 +91,11 @@ __all__ = [
     "ConversationalAgent",
     # Context
     "AgentContext",
+    # Sandbox
+    "ExecuteResult",
+    "LocalBackend",
+    "SandboxBackend",
+    "SandboxManager",
     # Session
     "BaseSession",
     "SessionState",

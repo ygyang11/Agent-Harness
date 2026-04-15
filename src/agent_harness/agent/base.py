@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent_harness.background import BackgroundTask
     from agent_harness.prompt.system_builder import SystemPromptBuilder
+    from agent_harness.sandbox.backend import SandboxBackend
     from agent_harness.session.base import BaseSession
 
 from pydantic import BaseModel, Field
@@ -99,6 +100,7 @@ class BaseAgent(ABC, EventEmitter):
         approval: ApprovalPolicy | None = None,
         approval_handler: ApprovalHandler | None = None,
         prompt_builder: SystemPromptBuilder | None = None,
+        sandbox: SandboxBackend | None = None,
     ) -> None:
         from agent_harness.prompt.runtime_context import RuntimeContextProvider
         from agent_harness.prompt.sections import create_default_builder, make_intro_section
@@ -162,6 +164,11 @@ class BaseAgent(ABC, EventEmitter):
         from agent_harness.background import BackgroundTaskManager
 
         self._bg_manager = BackgroundTaskManager()
+
+        # Sandbox, LocalBackend when disabled, DockerBackend when enabled)
+        from agent_harness.sandbox import SandboxManager, resolve_sandbox
+
+        self._sandbox: SandboxManager = resolve_sandbox(sandbox, self.context.config)
 
         # Context compression setup
         if (
@@ -250,16 +257,6 @@ class BaseAgent(ABC, EventEmitter):
                 signal.streak,
             )
 
-    @property
-    def tools(self) -> list[BaseTool]:
-        tools: list[BaseTool] = self.tool_registry.list_tools()
-        return tools
-
-    @property
-    def tool_schemas(self) -> list[ToolSchema]:
-        schemas: list[ToolSchema] = self.tool_registry.get_schemas()
-        return schemas
-
     async def _should_inject_system_prompt(self) -> bool:
         if not self.system_prompt:
             return False
@@ -273,6 +270,17 @@ class BaseAgent(ABC, EventEmitter):
             first_message.role == Role.SYSTEM
             and (first_message.content or "") == self.system_prompt
         )
+
+    @property
+    def tools(self) -> list[BaseTool]:
+        tools: list[BaseTool] = self.tool_registry.list_tools()
+        return tools
+
+    @property
+    def tool_schemas(self) -> list[ToolSchema]:
+        schemas: list[ToolSchema] = self.tool_registry.get_schemas()
+        return schemas
+
 
     async def run(
         self,
@@ -305,7 +313,7 @@ class BaseAgent(ABC, EventEmitter):
         if self.context.state.is_terminal:
             self.context.state.reset()
 
-        # Session restore: only when context is empty (first call or cross-process)
+        # Session, Compressor, Tool restore: only when context is empty (first call or cross-process)
         if resolved_session and not await self.context.short_term_memory.get_context_messages():
             state = await resolved_session.load_state()
             if state:
@@ -316,7 +324,6 @@ class BaseAgent(ABC, EventEmitter):
                 if compressor:
                     compressor.restore_runtime_state(state.messages)
 
-                # Restore stateful tool states
                 await self.tool_registry.restore_states(
                     state.metadata.get("_tool_states", {}),
                     self.hooks,

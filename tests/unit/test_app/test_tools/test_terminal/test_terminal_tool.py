@@ -4,77 +4,95 @@ from __future__ import annotations
 
 import pytest
 
-from agent_app.tools.terminal.terminal_tool import terminal_tool
+from agent_app.tools.terminal.terminal_tool import TerminalTool
 from agent_harness.core.config import ToolConfig
 from agent_harness.core.message import ToolCall
+from agent_harness.sandbox import SandboxManager
+from agent_harness.sandbox.backend import LocalBackend
 from agent_harness.tool.decorator import tool
 from agent_harness.tool.executor import ToolExecutor
 from agent_harness.tool.registry import ToolRegistry
 
 
+def _make_tool() -> TerminalTool:
+    """Create a TerminalTool bound to a mock agent with LocalBackend sandbox."""
+    t = TerminalTool()
+
+    class _MockAgent:
+        _sandbox = SandboxManager(LocalBackend())
+        _bg_manager = None
+
+    t.bind_agent(_MockAgent())
+    return t
+
+
 class TestTerminalTool:
     """Unit tests — direct tool execution."""
+
+    @pytest.fixture
+    def tt(self) -> TerminalTool:
+        return _make_tool()
 
     # --- Basic execution ---
 
     @pytest.mark.asyncio
-    async def test_simple_command(self) -> None:
-        result = await terminal_tool.execute(command="echo hello")
+    async def test_simple_command(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="echo hello")
         assert "hello" in result
 
     @pytest.mark.asyncio
-    async def test_empty_command(self) -> None:
-        result = await terminal_tool.execute(command="")
+    async def test_empty_command(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="")
         assert result == "Error: command cannot be empty"
 
     @pytest.mark.asyncio
-    async def test_whitespace_only_command(self) -> None:
-        result = await terminal_tool.execute(command="   ")
+    async def test_whitespace_only_command(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="   ")
         assert result == "Error: command cannot be empty"
 
     @pytest.mark.asyncio
-    async def test_no_output(self) -> None:
-        result = await terminal_tool.execute(command="true")
+    async def test_no_output(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="true")
         assert result == "(no output)"
 
     @pytest.mark.asyncio
-    async def test_non_zero_exit(self) -> None:
-        result = await terminal_tool.execute(
+    async def test_non_zero_exit(self, tt: TerminalTool) -> None:
+        result = await tt.execute(
             command='python3 -c "import sys; sys.exit(2)"', timeout=5,
         )
         assert "[exit code 2]" in result
 
     @pytest.mark.asyncio
-    async def test_stderr_merged(self) -> None:
-        result = await terminal_tool.execute(command="echo err >&2 && echo out", timeout=5)
+    async def test_stderr_merged(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="echo err >&2 && echo out", timeout=5)
         assert "out" in result
         assert "err" in result
 
-    # --- Full bash syntax (all blocked by old implementation, now allowed) ---
+    # --- Full bash syntax ---
 
     @pytest.mark.asyncio
-    async def test_pipe(self) -> None:
-        result = await terminal_tool.execute(command="echo hello | tr 'h' 'H'", timeout=5)
+    async def test_pipe(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="echo hello | tr 'h' 'H'", timeout=5)
         assert "Hello" in result
 
     @pytest.mark.asyncio
-    async def test_variable_expansion(self) -> None:
-        result = await terminal_tool.execute(command="X=42 && echo $X", timeout=5)
+    async def test_variable_expansion(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="X=42 && echo $X", timeout=5)
         assert "42" in result
 
     @pytest.mark.asyncio
-    async def test_git(self) -> None:
-        result = await terminal_tool.execute(command="git --version", timeout=5)
+    async def test_git(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="git --version", timeout=5)
         assert "git version" in result
 
     @pytest.mark.asyncio
-    async def test_subshell(self) -> None:
-        result = await terminal_tool.execute(command="echo $(echo nested)", timeout=5)
+    async def test_subshell(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="echo $(echo nested)", timeout=5)
         assert "nested" in result
 
     @pytest.mark.asyncio
-    async def test_redirect(self) -> None:
-        result = await terminal_tool.execute(
+    async def test_redirect(self, tt: TerminalTool) -> None:
+        result = await tt.execute(
             command="echo data > out.txt && cat out.txt", timeout=5,
         )
         assert "data" in result
@@ -82,43 +100,53 @@ class TestTerminalTool:
     # --- Timeout ---
 
     @pytest.mark.asyncio
-    async def test_timeout_enforced(self) -> None:
-        result = await terminal_tool.execute(command="sleep 10", timeout=1)
+    async def test_timeout_enforced(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="sleep 10", timeout=1)
         assert "timed out" in result
 
     @pytest.mark.asyncio
-    async def test_timeout_capped_at_max(self) -> None:
-        result = await terminal_tool.execute(command="echo ok", timeout=1000)
+    async def test_timeout_capped_at_max(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="echo ok", timeout=1000)
         assert "ok" in result
 
     @pytest.mark.asyncio
-    async def test_timeout_zero(self) -> None:
-        result = await terminal_tool.execute(command="echo x", timeout=0)
+    async def test_timeout_zero(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="echo x", timeout=0)
         assert result == "Error: timeout must be greater than 0"
 
     @pytest.mark.asyncio
-    async def test_timeout_negative(self) -> None:
-        result = await terminal_tool.execute(command="echo x", timeout=-1)
+    async def test_timeout_negative(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="echo x", timeout=-1)
         assert result == "Error: timeout must be greater than 0"
 
     # --- Output truncation ---
 
     @pytest.mark.asyncio
-    async def test_large_output_truncated(self) -> None:
-        result = await terminal_tool.execute(
+    async def test_large_output_truncated(self, tt: TerminalTool) -> None:
+        result = await tt.execute(
             command='python3 -c "print(\'x \' * 50000)"', timeout=10,
         )
         assert "... (truncated)" in result
+
+    # --- Exit code N/A ---
+
+    @pytest.mark.asyncio
+    async def test_timeout_shows_na_exit_code(self, tt: TerminalTool) -> None:
+        result = await tt.execute(command="sleep 10", timeout=1)
+        assert "[exit code N/A]" in result
 
 
 class TestTerminalToolIntegration:
     """Integration tests through ToolExecutor — validates timeout chain."""
 
+    @pytest.fixture
+    def tt(self) -> TerminalTool:
+        return _make_tool()
+
     @pytest.mark.asyncio
-    async def test_executor_timeout_overrides_short_default(self) -> None:
-        """executor_timeout (610s) overrides a very short default_timeout (1s)."""
+    async def test_executor_timeout_overrides_short_default(self, tt: TerminalTool) -> None:
         registry = ToolRegistry()
-        registry.register(terminal_tool)
+        registry.register(tt)
         config = ToolConfig(default_timeout=1.0)
         executor = ToolExecutor(registry, config=config)
 
@@ -131,10 +159,9 @@ class TestTerminalToolIntegration:
         assert "done" in result.content
 
     @pytest.mark.asyncio
-    async def test_internal_timeout_fires_before_executor(self) -> None:
-        """Terminal's internal timeout (1s) fires, not executor's outer timeout."""
+    async def test_internal_timeout_fires_before_executor(self, tt: TerminalTool) -> None:
         registry = ToolRegistry()
-        registry.register(terminal_tool)
+        registry.register(tt)
         executor = ToolExecutor(registry)
 
         tc = ToolCall(
@@ -147,9 +174,9 @@ class TestTerminalToolIntegration:
 
     @pytest.mark.asyncio
     async def test_executor_timeout_attribute(self) -> None:
-        """terminal_tool declares executor_timeout > 600; default tools don't."""
-        assert terminal_tool.executor_timeout is not None
-        assert terminal_tool.executor_timeout > 600
+        tt = _make_tool()
+        assert tt.executor_timeout is not None
+        assert tt.executor_timeout > 600
 
         @tool
         async def my_tool(x: str) -> str:
