@@ -155,3 +155,80 @@ class TestToolExecutorBatch:
         assert len(results) == 2
         assert results[0].is_error is False
         assert results[1].is_error is True
+
+
+class TestToolExecutorStream:
+    async def test_stream_yields_in_completion_order(self) -> None:
+        fast = _SlowTool(delay=0.05)
+        fast.name = "fast_tool"
+        slow = _SlowTool(delay=0.2)
+        slow.name = "slow_tool"
+        registry = ToolRegistry()
+        registry.register(fast)
+        registry.register(slow)
+        executor = ToolExecutor(registry)
+
+        calls = [
+            ToolCall(id="slow", name="slow_tool", arguments={}),
+            ToolCall(id="fast", name="fast_tool", arguments={}),
+        ]
+
+        results: list[str] = []
+        async for result in executor.execute_stream(calls):
+            results.append(result.tool_call_id)
+
+        assert results[0] == "fast"
+        assert results[1] == "slow"
+
+    async def test_stream_empty(self) -> None:
+        executor = _make_executor()
+        results = [r async for r in executor.execute_stream([])]
+        assert results == []
+
+    async def test_stream_cleanup_on_early_exit(self) -> None:
+        cancelled = False
+
+        class _CancelTracker(BaseTool):
+            def __init__(self) -> None:
+                super().__init__(name="trackable", description="t")
+
+            async def execute(self, **kwargs: Any) -> str:
+                nonlocal cancelled
+                try:
+                    await asyncio.sleep(10)
+                    return "done"
+                except asyncio.CancelledError:
+                    cancelled = True
+                    raise
+
+            def get_schema(self) -> ToolSchema:
+                return ToolSchema(name=self.name, description=self.description)
+
+        fast = MockTool(response="fast")
+        tracker = _CancelTracker()
+        registry = ToolRegistry()
+        registry.register(fast)
+        registry.register(tracker)
+        executor = ToolExecutor(registry)
+
+        calls = [
+            ToolCall(id="1", name="mock_tool", arguments={}),
+            ToolCall(id="2", name="trackable", arguments={}),
+        ]
+
+        async for _ in executor.execute_stream(calls):
+            break  # exit after first result
+
+        await asyncio.sleep(0.1)
+        assert cancelled
+
+    async def test_stream_batch_still_works(self) -> None:
+        mock = MockTool(response="batch_ok")
+        executor = _make_executor(mock)
+        calls = [
+            ToolCall(name="mock_tool", arguments={"query": "a"}),
+            ToolCall(name="mock_tool", arguments={"query": "b"}),
+        ]
+        results = await executor.execute_batch(calls)
+        assert len(results) == 2
+        assert all(r.content == "batch_ok" for r in results)

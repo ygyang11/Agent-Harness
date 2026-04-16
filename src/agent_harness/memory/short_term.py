@@ -116,6 +116,11 @@ class ShortTermMemory(BaseMemory):
     async def size(self) -> int:
         return len(self._messages)
 
+    @property
+    def token_count(self) -> int:
+        """Current token count of all messages in memory."""
+        return count_messages_tokens(self._messages, self.model)
+
     @staticmethod
     def _trim_by_tokens(
         messages: list[Message], max_tokens: int, model: str

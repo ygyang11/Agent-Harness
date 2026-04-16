@@ -4,10 +4,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
-from typing import Any
+from collections.abc import AsyncIterator
 
 from agent_harness.core.config import HarnessConfig, ToolConfig, resolve_tool_config
-from agent_harness.core.errors import ToolError, ToolNotFoundError, ToolTimeoutError, ToolValidationError
+from agent_harness.core.errors import (
+    ToolError,
+    ToolNotFoundError,
+    ToolTimeoutError,
+    ToolValidationError,
+)
 from agent_harness.core.event import EventEmitter
 from agent_harness.core.message import ToolCall, ToolResult
 from agent_harness.tool.registry import ToolRegistry
@@ -156,3 +161,33 @@ class ToolExecutor(EventEmitter):
 
         tasks = [self.execute(tc, timeout=timeout) for tc in tool_calls]
         return list(await asyncio.gather(*tasks))
+
+    async def execute_stream(
+        self,
+        tool_calls: list[ToolCall],
+        timeout: float | None = None,
+    ) -> AsyncIterator[ToolResult]:
+        """Execute tool calls concurrently, yielding results as each completes.
+
+        Unlike execute_batch (which waits for all), this yields each result
+        as soon as it finishes. Enables real-time UI updates.
+
+        Concurrency is still bounded by max_concurrency semaphore.
+        Results are yielded in completion order, not call order.
+        Remaining tasks are cancelled if the consumer stops early.
+        """
+        if not tool_calls:
+            return
+
+        tasks: dict[asyncio.Task[ToolResult], ToolCall] = {
+            asyncio.create_task(self.execute(tc, timeout=timeout)): tc
+            for tc in tool_calls
+        }
+        try:
+            for future in asyncio.as_completed(tasks):
+                yield await future
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)

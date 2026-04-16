@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Any
 from urllib.parse import urlparse
 
 from agent_harness.approval.rules import (
@@ -109,6 +110,30 @@ class ApprovalPolicy:
     def reset_session(self) -> None:
         """Clear all session-level grants."""
         self._session_grants.clear()
+
+    def export_session_grants(self) -> dict[str, Any]:
+        """Serialize session grants for persistence.
+
+        Converts internal set[tuple] structure to JSON-safe list[list].
+        """
+        if not self._session_grants:
+            return {}
+        return {
+            k: (sorted([list(t) for t in v]) if v is not None else None)
+            for k, v in self._session_grants.items()
+        }
+
+    def import_session_grants(self, data: dict[str, Any]) -> None:
+        """Restore session grants from persisted data (authoritative).
+
+        Always clears existing grants first, then restores from data.
+        Empty data = clear all grants (not a no-op).
+        """
+        self._session_grants.clear()
+        for k, v in data.items():
+            self._session_grants[k] = (
+                set(tuple(t) for t in v) if v is not None else None
+            )
 
     # ── internal ──
 

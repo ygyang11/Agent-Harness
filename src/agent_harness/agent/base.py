@@ -331,6 +331,11 @@ class BaseAgent(ABC, EventEmitter):
                     self.name,
                 )
 
+                if self._approval:
+                    self._approval.import_session_grants(
+                        state.metadata.get("_approval_grants", {})
+                    )
+
         # Normalize input
         if isinstance(input, str):
             input_msg = Message.user(input)
@@ -401,6 +406,10 @@ class BaseAgent(ABC, EventEmitter):
                 tool_states = self.tool_registry.save_states()
                 if tool_states:
                     ss.metadata["_tool_states"] = tool_states
+                if self._approval:
+                    grants = self._approval.export_session_grants()
+                    if grants:
+                        ss.metadata["_approval_grants"] = grants
                 await resolved_session.save_state(ss)
 
         messages = await self.context.short_term_memory.get_context_messages()
@@ -725,18 +734,25 @@ class BaseAgent(ABC, EventEmitter):
                         )
                     )
 
-        results: list[ToolResult] = []
+        # ── Hooks: denied immediately, approved in completion order ──
+        result_map: dict[str, ToolResult] = {}
+
+        for r in denied_results:
+            result_map[r.tool_call_id] = r
+            await self.hooks.on_tool_result(self.name, r)
+
         if approved:
-            results = await self.tool_executor.execute_batch(approved)
+            async for result in self.tool_executor.execute_stream(approved):
+                result_map[result.tool_call_id] = result
+                await self.hooks.on_tool_result(self.name, result)
 
-        all_results = denied_results + results
-        result_map = {r.tool_call_id: r for r in all_results}
-        ordered = [result_map[tc.id] for tc in tool_calls]
-
+        # ── Memory: write in original call order (transcript stable) ──
         self.context.state.transition(AgentState.OBSERVING)
 
-        for r in ordered:
-            await self.hooks.on_tool_result(self.name, r)
+        ordered: list[ToolResult] = []
+        for tc in tool_calls:
+            r = result_map[tc.id]
+            ordered.append(r)
             await self.context.short_term_memory.add_message(
                 Message.tool(
                     tool_call_id=r.tool_call_id,
@@ -745,17 +761,12 @@ class BaseAgent(ABC, EventEmitter):
                 )
             )
 
-        # Notify stateful tools after successful execution
-        for tc in approved:
-            tc_result = result_map.get(tc.id)
-            if tc_result and not tc_result.is_error:
-                tool = (
-                    self.tool_registry.get(tc.name)
-                    if self.tool_registry.has(tc.name)
-                    else None
-                )
-                if tool:
-                    await tool.notify_state(self.hooks, self.name)
+        # Notify stateful tools (in call order, after memory write)
+        for tc in tool_calls:
+            r = result_map[tc.id]
+            if not r.is_error and self.tool_registry.has(tc.name):
+                tool = self.tool_registry.get(tc.name)
+                await tool.notify_state(self.hooks, self.name)
 
         return ordered
 

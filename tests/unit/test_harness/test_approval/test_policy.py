@@ -305,3 +305,59 @@ class TestDerivePrefix:
 
     def test_command_empty(self) -> None:
         assert derive_session_prefix("", "command") == ""
+
+
+class TestSessionGrantsPersistence:
+    def test_export_empty(self) -> None:
+        p = ApprovalPolicy(mode="auto")
+        assert p.export_session_grants() == {}
+
+    def test_export_import_roundtrip_tool_level(self) -> None:
+        p = ApprovalPolicy(mode="auto")
+        p.grant_session("read_file")
+
+        exported = p.export_session_grants()
+        assert "read_file" in exported
+        assert exported["read_file"] is None
+
+        p2 = ApprovalPolicy(mode="auto")
+        p2.import_session_grants(exported)
+        assert p2._session_grants == p._session_grants
+
+    def test_export_import_roundtrip_resource_level(self) -> None:
+        p = ApprovalPolicy(mode="auto")
+        p.grant_session("read_file", resource="src/main.py", kind="path")
+
+        exported = p.export_session_grants()
+        assert "read_file" in exported
+        assert exported["read_file"] is not None
+
+        p2 = ApprovalPolicy(mode="auto")
+        p2.import_session_grants(exported)
+        assert p2._session_grants == p._session_grants
+
+    def test_import_empty_data_clears_existing(self) -> None:
+        p = ApprovalPolicy(mode="auto")
+        p.grant_session("read_file")
+        assert "read_file" in p._session_grants
+
+        p.import_session_grants({})
+        assert p._session_grants == {}
+
+    def test_import_overwrites_existing(self) -> None:
+        p = ApprovalPolicy(mode="auto")
+        p.grant_session("read_file")
+
+        p.import_session_grants({"write_file": None})
+        assert "write_file" in p._session_grants
+        assert "read_file" not in p._session_grants
+
+    def test_export_import_mixed_grants(self) -> None:
+        p = ApprovalPolicy(mode="auto")
+        p.grant_session("read_file")
+        p.grant_session("terminal_tool", resource="git status", kind="command")
+
+        exported = p.export_session_grants()
+        p2 = ApprovalPolicy(mode="auto")
+        p2.import_session_grants(exported)
+        assert p2._session_grants == p._session_grants

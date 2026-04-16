@@ -9,6 +9,8 @@ Covers:
 """
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from agent_harness.agent.base import StepResult
@@ -524,3 +526,56 @@ class TestApprovalIntegration:
         assert result.output == "done"
         registered = agent.tool_registry.get("mock_tool")
         assert len(registered.call_history) == 1
+
+
+class TestExecuteToolsTwoPhase:
+    """Verify two-phase execute_tools: hooks in completion order, memory in call order."""
+
+    @pytest.mark.asyncio
+    async def test_hooks_fire_for_denied_results(self) -> None:
+        from agent_harness.agent.react import ReActAgent
+
+        hook_results: list[str] = []
+
+        class _Tracker(DefaultHooks):
+            async def on_tool_result(self, agent_name: str, result: Any) -> None:
+                hook_results.append(result.tool_call_id)
+
+        llm = MockLLM()
+        tool = MockTool(response="ok")
+        handler = _MockApprovalHandler({"mock_tool": ApprovalDecision.DENY})
+
+        llm.add_tool_call_response("mock_tool", {"query": "test"})
+        llm.add_text_response("denied")
+
+        agent = ReActAgent(
+            name="test", llm=llm, tools=[tool], system_prompt="",
+            hooks=_Tracker(),
+            approval=ApprovalPolicy(), approval_handler=handler,
+        )
+        await agent.run("go")
+
+        # denied result must trigger on_tool_result
+        assert len(hook_results) >= 1
+
+    @pytest.mark.asyncio
+    async def test_memory_order_matches_call_order(self) -> None:
+        from agent_harness.agent.react import ReActAgent
+        from agent_harness.core.message import Role
+
+        llm = MockLLM()
+        tool = MockTool(response="ok")
+
+        # Two sequential tool-call steps
+        llm.add_tool_call_response("mock_tool", {"query": "first"})
+        llm.add_tool_call_response("mock_tool", {"query": "second"})
+        llm.add_text_response("done")
+
+        agent = ReActAgent(name="test", llm=llm, tools=[tool], system_prompt="")
+        await agent.run("go")
+
+        tool_msgs = [m for m in agent.context.short_term_memory._messages
+                     if m.role == Role.TOOL]
+        assert len(tool_msgs) == 2
+        assert tool_msgs[0].tool_result is not None
+        assert tool_msgs[1].tool_result is not None

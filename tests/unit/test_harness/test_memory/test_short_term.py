@@ -69,6 +69,31 @@ class TestShortTermMemoryBasic:
         assert await mem.size() == 20
 
 
+class TestTokenCount:
+    async def test_token_count_empty(self) -> None:
+        mem = ShortTermMemory(max_tokens=100000, model="gpt-4o")
+        baseline = mem.token_count
+        await mem.add_message(Message.user("Hello world"))
+        assert mem.token_count > baseline
+
+    async def test_token_count_increases(self) -> None:
+        mem = ShortTermMemory(max_tokens=100000, model="gpt-4o")
+        await mem.add_message(Message.user("Hello world"))
+        count_after_one = mem.token_count
+        assert count_after_one > 0
+
+        await mem.add_message(Message.assistant("Hi there"))
+        assert mem.token_count > count_after_one
+
+    async def test_token_count_resets_on_clear(self) -> None:
+        mem = ShortTermMemory(max_tokens=100000, model="gpt-4o")
+        baseline = mem.token_count
+        await mem.add_message(Message.user("Hello world"))
+        assert mem.token_count > baseline
+        await mem.clear()
+        assert mem.token_count == baseline
+
+
 class TestTokenTrim:
     @pytest.mark.asyncio
     async def test_trim_on_get_context(self) -> None:
