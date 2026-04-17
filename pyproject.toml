@@ -42,6 +42,13 @@ dev = [
     "mypy>=1.10",
     "types-PyYAML>=6.0",
 ]
+cli = [
+    "prompt-toolkit>=3.0.50",
+    "rich>=13.0",
+]
+
+[project.scripts]
+harness = "agent_cli.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
