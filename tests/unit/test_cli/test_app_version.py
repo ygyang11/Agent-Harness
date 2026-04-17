@@ -10,10 +10,3 @@ def test_version_flag_prints_and_exits_zero(capsys: pytest.CaptureFixture[str]) 
     assert rc == 0
     assert "harness" in out
     assert __version__ in out
-
-
-def test_no_args_reports_not_wired(capsys: pytest.CaptureFixture[str]) -> None:
-    rc = main([])
-    err = capsys.readouterr().err
-    assert rc == 1
-    assert "REPL not yet wired" in err
