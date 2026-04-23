@@ -42,13 +42,13 @@ def patch_dangling_tool_calls(messages: list[Message]) -> list[Message]:
         return messages  # no-op fast path, return original reference
 
     if dangling_ids:
-        logger.warning(
+        logger.debug(
             "Patching %d dangling tool call(s): %s",
             len(dangling_ids),
             dangling_ids,
         )
     if orphaned_ids:
-        logger.warning(
+        logger.debug(
             "Removing %d orphaned tool result(s): %s",
             len(orphaned_ids),
             orphaned_ids,

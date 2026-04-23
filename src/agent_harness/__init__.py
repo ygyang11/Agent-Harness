@@ -42,7 +42,7 @@ from agent_harness.context.context import AgentContext
 from agent_harness.sandbox import ExecuteResult, LocalBackend, SandboxBackend, SandboxManager
 from agent_harness.session import BaseSession, SessionState, FileSession, InMemorySession
 
-__version__ = "0.4.10"
+__version__ = "0.5.0"
 
 __all__ = [
     # Logging

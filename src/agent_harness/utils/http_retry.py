@@ -114,11 +114,12 @@ async def _request_bytes_with_retry(
 
 
 def _log_retry_status(status: int, attempt: int, attempts: int) -> None:
+    # Debug-level: these logs fire from within the CLI's live-status window
     action = "retrying" if attempt < attempts else "no retries left"
     if status == 429:
-        logger.warning("Rate limited (429), attempt %d/%d failed; %s", attempt, attempts, action)
+        logger.debug("Rate limited (429), attempt %d/%d failed; %s", attempt, attempts, action)
         return
-    logger.warning(
+    logger.debug(
         "Server error (HTTP %d), attempt %d/%d failed; %s",
         status,
         attempt,
@@ -129,7 +130,7 @@ def _log_retry_status(status: int, attempt: int, attempts: int) -> None:
 
 def _log_retry_exception(exc: Exception, attempt: int, attempts: int) -> None:
     action = "retrying" if attempt < attempts else "no retries left"
-    logger.warning(
+    logger.debug(
         "Request failed (%s), attempt %d/%d failed; %s",
         exc,
         attempt,

@@ -7,9 +7,9 @@
 # --- LLM Provider ---
 llm:
   provider: "openai"            # "openai" | "anthropic"
-  model: "gpt-x"                # Model identifier (e.g. gpt-5.4, claude-4.6-opus)
-  temperature:                  # Sampling temperature (0.0 – 2.0)
-  max_tokens:                   # Maximum output tokens
+  model: "__SET_YOUR_MODEL__"   # Model identifier (e.g. gpt-5.4, claude-4.6-opus)
+  temperature: 1.0              # Sampling temperature (0.0 – 2.0)
+  max_tokens: 16000             # Maximum output tokens
   api_key: ""                   # API key (overrides env var)
   base_url: ""                  # Custom API endpoint
                                 # Examples:
@@ -88,14 +88,11 @@ approval:
     - "read_file(src/**)"               # Read files under src/
     - "terminal_tool(git *)"            # Git commands
     - "terminal_tool(pytest *)"         # Test commands
-    - "terminal_tool(ruff *)"           # Linting
-    - "web_fetch(domain:docs.python.org)"  # Python docs
     - "web_fetch(domain:github.com)"       # GitHub
 
   always_deny:                  # Rules that are always blocked (deny > allow)
     - "terminal_tool(rm -rf *)"         # Destructive removal
     - "terminal_tool(chmod 777 *)"      # Dangerous permissions
-    - "edit_file(**/.env*)"
 
 # --- Sub-Agent ---
 sub_agent:
