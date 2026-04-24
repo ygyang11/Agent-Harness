@@ -15,7 +15,8 @@ from agent_harness.hooks import (
 )
 from agent_harness.core.config import HarnessConfig, TracingConfig
 from agent_harness.core.message import MessageChunk, ToolCall, ToolResult
-from agent_harness.llm.types import FinishReason, StreamDelta, Usage
+from agent_harness.core.errors import LLMConnectionError
+from agent_harness.llm.types import FinishReason, LLMRetryInfo, StreamDelta, Usage
 from agent_harness.tracing.tracer import Span
 from agent_harness.utils.token_counter import count_tokens
 
@@ -825,6 +826,50 @@ class TestCompositeHooks:
         composite = CompositeHooks(TrackingHooks("a"), TrackingHooks("b"))
         await composite.on_run_start("test", "hello")
         assert calls == ["a", "b"]
+
+
+class TestLLMRetryHook:
+    async def test_default_hooks_on_llm_retry_is_no_op(self) -> None:
+        hooks = DefaultHooks()
+        info = LLMRetryInfo(
+            kind="stream", attempt=1, max_retries=3, wait=1.0,
+            error=LLMConnectionError("boom"),
+        )
+        await hooks.on_llm_retry("agent", info)
+
+    async def test_composite_fan_out_on_llm_retry_in_order(self) -> None:
+        log: list[tuple[str, int]] = []
+
+        class Recorder(DefaultHooks):
+            def __init__(self, label: str) -> None:
+                self._label = label
+
+            async def on_llm_retry(self, agent_name: str, info: LLMRetryInfo) -> None:
+                log.append((self._label, info.attempt))
+
+        composite = CompositeHooks(Recorder("a"), Recorder("b"))
+        info = LLMRetryInfo(
+            kind="generate", attempt=2, max_retries=3, wait=2.0,
+            error=TimeoutError(),
+        )
+        await composite.on_llm_retry("agent", info)
+        assert log == [("a", 2), ("b", 2)]
+
+    async def test_tracing_hooks_on_llm_retry_is_no_op(self) -> None:
+        hooks = TracingHooks(trace_dir="/tmp/test_traces")
+        info = LLMRetryInfo(
+            kind="stream", attempt=1, max_retries=3, wait=1.0,
+            error=LLMConnectionError("boom"),
+        )
+        await hooks.on_llm_retry("agent", info)
+
+    async def test_progress_hooks_on_llm_retry_is_no_op(self) -> None:
+        hooks = ProgressHooks()
+        info = LLMRetryInfo(
+            kind="generate", attempt=1, max_retries=3, wait=1.0,
+            error=TimeoutError(),
+        )
+        await hooks.on_llm_retry("agent", info)
 
 
 class TestResolveHooksProgress:

@@ -1,11 +1,13 @@
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from agent_cli.adapter import CliAdapter
 from agent_cli.render import status_lines as status_lines_mod
 from agent_cli.theme import FLEXOKI_DARK
+from agent_harness.core.errors import LLMConnectionError
+from agent_harness.llm.types import LLMRetryInfo
 
 
 def _adapter() -> CliAdapter:
@@ -316,3 +318,91 @@ async def test_render_attachments_multibyte_path_safe() -> None:
     out = a.console.file.getvalue()
 
     assert "中文/foo.py" in out
+
+
+def _retry_info(
+    *,
+    attempt: int = 1,
+    max_retries: int = 3,
+    kind: str = "stream",
+    error: Exception | None = None,
+) -> LLMRetryInfo:
+    return LLMRetryInfo(
+        kind=kind,  # type: ignore[arg-type]
+        attempt=attempt,
+        max_retries=max_retries,
+        wait=1.0,
+        error=error or LLMConnectionError("transient"),
+    )
+
+
+async def test_on_retry_aborts_markdown_and_prints_separator(
+    fast_thinking: None,
+) -> None:
+    a = _adapter()
+    a.print_inline = AsyncMock()
+    await a.on_stream_delta("Hello world")
+    assert a._phase == "markdown"
+
+    await a.on_retry(_retry_info())
+
+    a.markdown.abort.assert_called_once()
+    a.print_inline.assert_awaited_once()
+    rendered = a.print_inline.await_args.args[0]
+    assert "Retrying LLM (1/3)" in rendered
+    assert "LLMConnectionError" in rendered
+    assert a._phase == "none"
+    assert a._thinking_line.task is None
+
+
+async def test_on_retry_from_tools_phase_ends_tool_display(
+    fast_thinking: None,
+) -> None:
+    a = _adapter()
+    a.print_inline = AsyncMock()
+    tc = MagicMock(id="t1")
+    tc.name = "read_file"
+    await a.on_tool_call(tc)
+    assert a._phase == "tools"
+
+    await a.on_retry(_retry_info())
+
+    a.tool_display.end.assert_called_once()
+    a.markdown.abort.assert_not_called()
+    assert a._phase == "none"
+
+
+async def test_on_retry_when_no_markdown_buffer_still_prints_and_stops_heartbeat(
+    fast_thinking: None,
+) -> None:
+    a = _adapter()
+    a.print_inline = AsyncMock()
+    await a.on_llm_call()
+    await asyncio.sleep(0.02)
+    assert a._thinking_line.task is not None
+
+    await a.on_retry(_retry_info(kind="generate", error=ConnectionError("dns")))
+
+    a.markdown.abort.assert_not_called()
+    a.print_inline.assert_awaited_once()
+    assert a._thinking_line.task is None
+
+
+async def test_on_retry_escapes_custom_exception_class_name(
+    fast_thinking: None,
+) -> None:
+    a = _adapter()
+    a.print_inline = AsyncMock()
+
+    class WeirdName(Exception):
+        ...
+
+    # Pick a name that rich would interpret as markup (lowercase tag-like).
+    WeirdName.__name__ = "Weird[bold red]Error"
+
+    await a.on_retry(_retry_info(error=WeirdName()))
+
+    rendered = a.print_inline.await_args.args[0]
+    # rich.markup.escape prefixes the bracket with a backslash so the tag
+    # is not parsed as active markup.
+    assert r"Weird\[bold red]Error" in rendered

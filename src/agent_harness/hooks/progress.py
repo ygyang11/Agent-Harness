@@ -15,7 +15,7 @@ _subagent_active: contextvars.ContextVar[bool] = contextvars.ContextVar(
 if TYPE_CHECKING:
     from agent_harness.approval.types import ApprovalRequest, ApprovalResult
     from agent_harness.core.message import ToolCall
-    from agent_harness.llm.types import StreamDelta
+    from agent_harness.llm.types import LLMRetryInfo, StreamDelta
 
 
 class ProgressHooks(DefaultHooks):
@@ -120,6 +120,9 @@ class ProgressHooks(DefaultHooks):
                 self._write("⏺ ")
             self._output.write(delta.chunk.delta_content)
             self._output.flush()
+
+    async def on_llm_retry(self, agent_name: str, info: LLMRetryInfo) -> None:
+        pass
 
     async def on_todo_update(
         self,

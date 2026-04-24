@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent_harness.approval.types import ApprovalRequest, ApprovalResult
     from agent_harness.core.message import ToolCall
-    from agent_harness.llm.types import StreamDelta
+    from agent_harness.llm.types import LLMRetryInfo, StreamDelta
 
 
 class DefaultHooks:
@@ -22,6 +22,9 @@ class DefaultHooks:
         pass
 
     async def on_llm_stream_delta(self, agent_name: str, delta: StreamDelta) -> None:
+        pass
+
+    async def on_llm_retry(self, agent_name: str, info: LLMRetryInfo) -> None:
         pass
 
     async def on_tool_call(self, agent_name: str, tool_call: ToolCall) -> None:

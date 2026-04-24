@@ -17,7 +17,7 @@ from agent_harness.utils.token_counter import truncate_text_by_tokens
 if TYPE_CHECKING:
     from agent_harness.approval.types import ApprovalRequest, ApprovalResult
     from agent_harness.core.message import ToolCall
-    from agent_harness.llm.types import StreamDelta
+    from agent_harness.llm.types import LLMRetryInfo, StreamDelta
 
 _active_orchestration_parent: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
     "_active_orchestration_parent", default=None
@@ -255,6 +255,9 @@ class TracingHooks(DefaultHooks):
                 )
                 self._cwrite("  " * depth + "▸ ")
             self._cwrite(delta.chunk.delta_content)
+
+    async def on_llm_retry(self, agent_name: str, info: LLMRetryInfo) -> None:
+        pass
 
     async def on_tool_call(self, agent_name: str, tool_call: ToolCall) -> None:
         if _streaming_active.get(False):

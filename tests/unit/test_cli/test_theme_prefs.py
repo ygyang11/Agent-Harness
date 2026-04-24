@@ -9,7 +9,7 @@ from agent_cli import theme as theme_module
 @pytest.fixture(autouse=True)
 def isolated_prefs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     prefs = tmp_path / "cli-prefs.json"
-    monkeypatch.setattr(theme_module, "_PREFS_PATH", prefs)
+    monkeypatch.setattr("agent_cli.runtime.prefs.PREFS_PATH", prefs)
     return prefs
 
 

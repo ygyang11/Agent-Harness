@@ -1,13 +1,12 @@
 """CLI visual theme: palette + Rich + prompt_toolkit bundle + persistence."""
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 from prompt_toolkit.styles import Style
 from rich.theme import Theme as RichTheme
+
+from agent_cli.runtime.prefs import read_prefs, write_prefs
 
 
 # ── Palette ────────────────────────────────────────────────────────────
@@ -247,29 +246,9 @@ LEFT_BAR = "┃"
 
 
 # ── Persistence ────────────────────────────────────────────────────────
-_PREFS_PATH = Path.home() / ".agent-harness" / "cli-prefs.json"
-
-
-def _read_prefs() -> dict[str, Any]:
-    try:
-        with _PREFS_PATH.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _write_prefs(prefs: dict[str, Any]) -> None:
-    _PREFS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _PREFS_PATH.with_suffix(_PREFS_PATH.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(prefs, f, indent=2, sort_keys=True)
-    tmp.replace(_PREFS_PATH)
-
-
 def load_saved_theme() -> CliTheme:
     """Resolve the persisted theme. Any failure falls back to ``DEFAULT_THEME``."""
-    name = _read_prefs().get("theme")
+    name = read_prefs().get("theme")
     if isinstance(name, str) and name in THEMES:
         return THEMES[name]
     return DEFAULT_THEME
@@ -281,6 +260,6 @@ def save_theme(name: str) -> None:
         raise KeyError(
             f"Unknown theme: {name!r}. Available: {', '.join(available_names())}"
         )
-    prefs = _read_prefs()
+    prefs = read_prefs()
     prefs["theme"] = name
-    _write_prefs(prefs)
+    write_prefs(prefs)

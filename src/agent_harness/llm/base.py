@@ -12,7 +12,13 @@ from agent_harness.core.config import LLMConfig
 from agent_harness.core.errors import LLMConnectionError, LLMError, LLMRateLimitError
 from agent_harness.core.event import EventEmitter
 from agent_harness.core.message import Message, ToolCall
-from agent_harness.llm.types import FinishReason, LLMResponse, StreamDelta, Usage
+from agent_harness.llm.types import (
+    FinishReason,
+    LLMResponse,
+    LLMRetryInfo,
+    StreamDelta,
+    Usage,
+)
 from agent_harness.tool.base import ToolSchema
 
 logger = logging.getLogger(__name__)
@@ -130,6 +136,7 @@ class BaseLLM(ABC, EventEmitter):
         self,
         messages: list[Message],
         tools: list[ToolSchema] | None = None,
+        on_retry: Callable[[LLMRetryInfo], Coroutine[Any, Any, None]] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """Generate with automatic event emission and built-in retry."""
@@ -138,7 +145,8 @@ class BaseLLM(ABC, EventEmitter):
             if self._rate_limiter:
                 await self._rate_limiter.acquire()
             response = await self._with_retry(
-                lambda: self.generate(messages, tools=tools, **kwargs)
+                lambda: self.generate(messages, tools=tools, **kwargs),
+                on_retry=on_retry,
             )
             await self.emit(
                 "llm.generate.end",
@@ -184,6 +192,7 @@ class BaseLLM(ABC, EventEmitter):
         messages: list[Message],
         tools: list[ToolSchema] | None = None,
         on_delta: Callable[[StreamDelta], Coroutine[Any, Any, None]] | None = None,
+        on_retry: Callable[[LLMRetryInfo], Coroutine[Any, Any, None]] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """Stream with event emission, rate limiting, and retry, returning LLMResponse.
@@ -195,6 +204,7 @@ class BaseLLM(ABC, EventEmitter):
             messages: Conversation history.
             tools: Available tools for function calling.
             on_delta: Optional async callback invoked for each StreamDelta chunk.
+            on_retry: Optional async callback invoked once per retry.
             **kwargs: Passed through to stream().
         """
         max_retries = self.config.max_retries
@@ -240,11 +250,37 @@ class BaseLLM(ABC, EventEmitter):
                     "Stream error (attempt %d/%d), retrying in %.1fs: %s",
                     attempt + 1, max_retries, wait, e,
                 )
+                if on_retry is not None:
+                    try:
+                        await on_retry(LLMRetryInfo(
+                            kind="stream",
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                            wait=wait,
+                            error=e,
+                        ))
+                    except Exception:
+                        logger.exception(
+                            "on_retry callback failed; continuing retry loop"
+                        )
+                await self.emit(
+                    "llm.stream.retry",
+                    model=self.model_name,
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    wait=wait,
+                    error=str(e),
+                )
                 await asyncio.sleep(wait)
 
         raise RuntimeError("Unreachable")  # pragma: no cover
 
-    async def _with_retry(self, call: Callable[[], Coroutine[Any, Any, T]]) -> T:
+    async def _with_retry(
+        self,
+        call: Callable[[], Coroutine[Any, Any, T]],
+        *,
+        on_retry: Callable[[LLMRetryInfo], Coroutine[Any, Any, None]] | None = None,
+    ) -> T:
         """Retry a coroutine on transient errors with exponential backoff."""
         max_retries = self.config.max_retries
         delay = self.config.retry_delay
@@ -261,6 +297,27 @@ class BaseLLM(ABC, EventEmitter):
                 logger.debug(
                     "Transient error (attempt %d/%d), retrying in %.1fs: %s",
                     attempt + 1, max_retries, wait, e,
+                )
+                if on_retry is not None:
+                    try:
+                        await on_retry(LLMRetryInfo(
+                            kind="generate",
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                            wait=wait,
+                            error=e,
+                        ))
+                    except Exception:
+                        logger.exception(
+                            "on_retry callback failed; continuing retry loop"
+                        )
+                await self.emit(
+                    "llm.generate.retry",
+                    model=self.model_name,
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    wait=wait,
+                    error=str(e),
                 )
                 await asyncio.sleep(wait)
 

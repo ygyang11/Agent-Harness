@@ -36,7 +36,7 @@ from agent_harness.core.message import Message, Role, ToolCall, ToolResult
 from agent_harness.hooks import DefaultHooks, resolve_hooks
 from agent_harness.llm import create_llm
 from agent_harness.llm.base import BaseLLM
-from agent_harness.llm.types import LLMResponse, StreamDelta, Usage
+from agent_harness.llm.types import LLMResponse, LLMRetryInfo, StreamDelta, Usage
 from agent_harness.tool.base import BaseTool, ToolSchema
 from agent_harness.tool.executor import ToolExecutor
 from agent_harness.tool.registry import ToolRegistry
@@ -624,6 +624,9 @@ class BaseAgent(ABC, EventEmitter):
         if self.context.state.current != AgentState.THINKING:
             self.context.state.transition(AgentState.THINKING)
 
+        async def _on_retry(info: LLMRetryInfo) -> None:
+            await self.hooks.on_llm_retry(self.name, info)
+
         if self._stream:
 
             async def _on_delta(delta: StreamDelta) -> None:
@@ -633,10 +636,16 @@ class BaseAgent(ABC, EventEmitter):
                 messages,
                 tools=tools,
                 on_delta=_on_delta,
+                on_retry=_on_retry,
                 **kwargs,
             )
         else:
-            response = await self.llm.generate_with_events(messages, tools=tools, **kwargs)
+            response = await self.llm.generate_with_events(
+                messages,
+                tools=tools,
+                on_retry=_on_retry,
+                **kwargs,
+            )
 
         self._total_usage = self._total_usage + response.usage
 

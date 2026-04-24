@@ -1,6 +1,9 @@
 from unittest.mock import AsyncMock, MagicMock
 
 from agent_cli.hooks import CliHooks
+from agent_harness.core.errors import LLMConnectionError
+from agent_harness.hooks.progress import _subagent_active
+from agent_harness.llm.types import LLMRetryInfo
 
 
 def _mock_adapter() -> MagicMock:
@@ -337,3 +340,35 @@ async def test_subagent_end_fires_in_foreground_context() -> None:
     hooks = CliHooks(a, approval_handler=handler)
     await hooks.on_subagent_end("parent", "sub", "generic", "do X", 3, 2, 1234.5)
     a.print_inline.assert_called_once()
+
+
+async def test_on_llm_retry_skipped_in_subagent() -> None:
+    a = _mock_adapter()
+    a.on_retry = AsyncMock()
+    hooks = CliHooks(a)
+    info = LLMRetryInfo(
+        kind="stream", attempt=1, max_retries=3, wait=1.0,
+        error=LLMConnectionError("x"),
+    )
+
+    token = _subagent_active.set(True)
+    try:
+        await hooks.on_llm_retry("subagent", info)
+    finally:
+        _subagent_active.reset(token)
+
+    a.on_retry.assert_not_awaited()
+
+
+async def test_on_llm_retry_dispatched_for_main_agent() -> None:
+    a = _mock_adapter()
+    a.on_retry = AsyncMock()
+    hooks = CliHooks(a)
+    info = LLMRetryInfo(
+        kind="generate", attempt=2, max_retries=3, wait=2.0,
+        error=TimeoutError(),
+    )
+
+    await hooks.on_llm_retry("main", info)
+
+    a.on_retry.assert_awaited_once_with(info)

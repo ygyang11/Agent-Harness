@@ -6,6 +6,7 @@ import time
 from typing import Literal
 
 from rich.console import Console, RenderableType
+from rich.markup import escape as rich_escape
 from rich.text import Text
 
 from agent_cli.render.markdown_stream import MarkdownStream
@@ -14,6 +15,7 @@ from agent_cli.render.tool_display import SUPPRESSED_IN_ROW, ToolDisplay
 from agent_cli.theme import CONTINUATION, TOOL_DONE, CliTheme
 from agent_harness.approval.types import ApprovalResult
 from agent_harness.core.message import ToolCall, ToolResult
+from agent_harness.llm.types import LLMRetryInfo
 
 Phase = Literal["markdown", "tools", "none"]
 
@@ -70,6 +72,14 @@ class CliAdapter:
             self.markdown.finalize()
         self._phase = "tools"
 
+    async def _enter_none(self) -> None:
+        await self._thinking_line.stop()
+        if self._phase == "markdown":
+            self.markdown.abort()
+        elif self._phase == "tools":
+            self.tool_display.end()
+        self._phase = "none"
+
     async def on_llm_call(self) -> None:
         await self._thinking_line.start()
 
@@ -78,6 +88,16 @@ class CliAdapter:
             return
         await self._enter_markdown()
         self.markdown.update(text)
+
+    async def on_retry(self, info: LLMRetryInfo) -> None:
+        await self._enter_none()
+        err_name = rich_escape(type(info.error).__name__)
+        line = (
+            f"[muted]── Retrying LLM "
+            f"({info.attempt}/{info.max_retries}) · "
+            f"{err_name} ──[/muted]"
+        )
+        await self.print_inline(line)
 
     async def on_tool_call(self, tool_call: ToolCall) -> None:
         if tool_call.name in SUPPRESSED_IN_ROW:

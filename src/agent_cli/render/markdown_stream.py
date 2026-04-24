@@ -51,6 +51,13 @@ class MarkdownStream:
         self._render(final=True)
         self._reset_after_final()
 
+    def abort(self) -> None:
+        if self._live is not None:
+            self._live.update(Text(""), refresh=True)
+            self._live.stop()
+            self._live = None
+        self._reset_after_final()
+
     def _reset_after_final(self) -> None:
         self._buffer = ""
         self._printed = []

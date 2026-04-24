@@ -83,7 +83,7 @@ def _session_row() -> Text:
 def _hint_row() -> Text:
     row = Text()
     row.append("  ")
-    for i, (glyph, label) in enumerate((("/", "commands"), ("@", "files"), ("?", "help"))):
+    for i, (glyph, label) in enumerate((("/", "commands"), ("@", "files"), ("!", "shell"))):
         if i > 0:
             row.append("     ")
         row.append(glyph, style="primary")

@@ -13,7 +13,7 @@ from agent_harness.approval.types import ApprovalRequest, ApprovalResult
 from agent_harness.core.message import ToolCall
 from agent_harness.hooks.base import DefaultHooks
 from agent_harness.hooks.progress import _subagent_active
-from agent_harness.llm.types import StreamDelta
+from agent_harness.llm.types import LLMRetryInfo, StreamDelta
 
 _debug_enabled: list[bool] = [False]
 
@@ -60,6 +60,11 @@ class CliHooks(DefaultHooks):
             return
         if delta.chunk.delta_content:
             await self.adapter.on_stream_delta(delta.chunk.delta_content)
+
+    async def on_llm_retry(self, agent_name: str, info: LLMRetryInfo) -> None:
+        if _subagent_active.get(False):
+            return
+        await self.adapter.on_retry(info)
 
     async def on_tool_call(self, agent_name: str, tool_call: ToolCall) -> None:
         if _subagent_active.get(False):

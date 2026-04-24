@@ -156,3 +156,51 @@ def test_short_update_does_not_drop_head_lines() -> None:
     for i in range(4):
         assert f"line{i}" in tail_plain, f"line{i} dropped: {tail_plain!r}"
     ms.finalize()
+
+
+def test_abort_drops_live_tail_without_promoting_to_scrollback() -> None:
+    ms, _ = _stream()
+    ms.update("Partial answer that should be discarded.")
+    # Short text fits entirely in the Live window — nothing was promoted yet.
+    assert ms._printed == []
+
+    ms.abort()
+
+    assert ms._buffer == ""
+    assert ms._printed == []
+    assert ms._live is None
+
+
+def test_abort_preserves_promoted_lines_drops_only_live_tail() -> None:
+    ms, buf = _stream()
+    long_body = "\n\n".join(f"Promoted paragraph {i}." for i in range(10))
+    ms.update(long_body + "\n\nUncommitted tail paragraph.")
+
+    promoted_snapshot = list(ms._printed)
+    assert promoted_snapshot, "expected promote to have occurred for long text"
+    before_len = len(buf.getvalue())
+
+    ms.abort()
+
+    # abort writes nothing new to the console (no promote), only stops Live.
+    # The Live.stop output (cursor-show etc.) is acceptable; assert no new
+    # promoted lines were committed by abort.
+    assert ms._buffer == ""
+    assert ms._printed == []
+    assert ms._live is None
+    # Scrollback (buf) still contains the paragraphs promoted before abort.
+    after_text = buf.getvalue()
+    assert "Promoted paragraph 0." in after_text
+    # Any write that happened during abort is bounded to Live-stop cleanup,
+    # not a full promote of the remaining tail.
+    new_bytes = after_text[before_len:]
+    assert "Uncommitted tail paragraph." not in new_bytes
+
+
+def test_abort_idempotent_when_live_never_started() -> None:
+    ms, buf = _stream()
+
+    ms.abort()
+
+    assert ms._live is None
+    assert buf.getvalue() == ""

@@ -1,8 +1,9 @@
 """LLM request and response types for agent_harness."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -50,3 +51,13 @@ class StreamDelta(BaseModel):
     chunk: MessageChunk
     usage: Usage | None = None
     finish_reason: FinishReason | None = None
+
+
+@dataclass(frozen=True)
+class LLMRetryInfo:
+    """Carried to ``on_llm_retry`` hooks before each retry sleep."""
+    kind: Literal["stream", "generate"]
+    attempt: int
+    max_retries: int
+    wait: float
+    error: Exception

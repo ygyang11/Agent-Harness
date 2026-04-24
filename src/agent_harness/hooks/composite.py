@@ -8,7 +8,7 @@ from agent_harness.hooks.base import DefaultHooks
 if TYPE_CHECKING:
     from agent_harness.approval.types import ApprovalRequest, ApprovalResult
     from agent_harness.core.message import ToolCall
-    from agent_harness.llm.types import StreamDelta
+    from agent_harness.llm.types import LLMRetryInfo, StreamDelta
 
 
 class CompositeHooks(DefaultHooks):
@@ -32,6 +32,10 @@ class CompositeHooks(DefaultHooks):
     async def on_llm_stream_delta(self, agent_name: str, delta: StreamDelta) -> None:
         for h in self._hooks:
             await h.on_llm_stream_delta(agent_name, delta)
+
+    async def on_llm_retry(self, agent_name: str, info: LLMRetryInfo) -> None:
+        for h in self._hooks:
+            await h.on_llm_retry(agent_name, info)
 
     async def on_tool_call(self, agent_name: str, tool_call: ToolCall) -> None:
         for h in self._hooks:
