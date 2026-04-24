@@ -236,7 +236,7 @@ class BaseLLM(ABC, EventEmitter):
                 wait = delay * (2 ** attempt)
                 if isinstance(e, LLMRateLimitError) and e.retry_after:
                     wait = max(wait, e.retry_after)
-                logger.warning(
+                logger.debug(
                     "Stream error (attempt %d/%d), retrying in %.1fs: %s",
                     attempt + 1, max_retries, wait, e,
                 )
@@ -258,7 +258,7 @@ class BaseLLM(ABC, EventEmitter):
                 wait = delay * (2 ** attempt)
                 if isinstance(e, LLMRateLimitError) and e.retry_after:
                     wait = max(wait, e.retry_after)
-                logger.warning(
+                logger.debug(
                     "Transient error (attempt %d/%d), retrying in %.1fs: %s",
                     attempt + 1, max_retries, wait, e,
                 )
@@ -301,7 +301,7 @@ class FallbackChain:
             try:
                 return await provider.generate_with_events(messages, tools=tools, **kwargs)
             except Exception as e:
-                logger.warning("Provider %s failed: %s, trying next", provider, e)
+                logger.debug("Provider %s failed: %s, trying next", provider, e)
                 errors.append(e)
 
         raise LLMError(

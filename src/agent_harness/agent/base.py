@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -288,6 +289,9 @@ class BaseAgent(ABC, EventEmitter):
         input: str | Message,
         *,
         session: str | BaseSession | None = None,
+        after_input_appended: (
+            Callable[[BaseAgent, Message, str], Awaitable[None]] | None
+        ) = None,
     ) -> AgentResult:
         """Main execution loop.
 
@@ -299,6 +303,9 @@ class BaseAgent(ABC, EventEmitter):
         the agent is in a terminal state (FINISHED or ERROR).
 
         Pass session (str or BaseSession) to enable persistence across restarts.
+
+        ``after_input_appended`` fires once inside the run-level try block,
+        after input append + on_run_start, before the first step.
         """
         from agent_harness.session.base import resolve_session
 
@@ -360,6 +367,9 @@ class BaseAgent(ABC, EventEmitter):
         final_output = ""
 
         try:
+            if after_input_appended is not None:
+                await after_input_appended(self, input_msg, input_text)
+
             for step_num in range(1, self.max_steps + 1):
                 # Harvest completed background tasks
                 await self._collect_background_results()

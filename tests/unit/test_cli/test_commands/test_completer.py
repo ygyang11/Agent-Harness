@@ -3,7 +3,7 @@ from prompt_toolkit.document import Document
 
 from agent_cli.commands.base import Command, CommandContext, CommandResult
 from agent_cli.commands.registry import CommandRegistry
-from agent_cli.repl.completer import build_command_completer
+from agent_cli.repl.completer import build_input_completer
 
 
 async def _noop(ctx: CommandContext, args: str) -> CommandResult:
@@ -23,30 +23,30 @@ def _completions(completer, text: str) -> list[str]:
 
 
 def test_no_completion_on_plain_text() -> None:
-    c = build_command_completer(_registry_with("/clear", "/compact"))
+    c = build_input_completer(_registry_with("/clear", "/compact"))
     assert _completions(c, "explain this") == []
     assert _completions(c, "cl") == []
     assert _completions(c, "") == []
 
 
 def test_slash_prefix_shows_all_commands() -> None:
-    c = build_command_completer(_registry_with("/clear", "/compact", "/exit"))
+    c = build_input_completer(_registry_with("/clear", "/compact", "/exit"))
     out = _completions(c, "/")
     assert set(out) == {"/clear", "/compact", "/exit"}
 
 
 def test_slash_prefix_narrows_with_typed_letters() -> None:
-    c = build_command_completer(_registry_with("/clear", "/compact", "/exit"))
+    c = build_input_completer(_registry_with("/clear", "/compact", "/exit"))
     out = _completions(c, "/cl")
     assert out == ["/clear"]
 
 
 def test_fuzzy_match_under_slash() -> None:
-    c = build_command_completer(_registry_with("/compact", "/clear"))
+    c = build_input_completer(_registry_with("/compact", "/clear"))
     assert "/compact" in _completions(c, "/cmpct")
 
 
 def test_no_completion_after_space() -> None:
-    c = build_command_completer(_registry_with("/compact"))
+    c = build_input_completer(_registry_with("/compact"))
     assert _completions(c, "/compact ") == []
     assert _completions(c, "/compact focus") == []

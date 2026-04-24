@@ -321,5 +321,58 @@ def _format_result_line(row: _ToolRow) -> Text | None:
     return line
 
 
+def format_attachment_line(tc: ToolCall, tr: ToolResult) -> Text:
+    """Body Text for one attachment row."""
+    target = (
+        str(tc.arguments.get("file_path"))
+        if tc.arguments.get("file_path") is not None
+        else str(tc.arguments.get("path"))
+        if tc.arguments.get("path") is not None
+        else ""
+    )
+    label = _DISPLAY_NAMES.get(tc.name, tc.name)
+
+    if _is_error_result(tr):
+        msg = (tr.content or "").replace("\n", " ")
+        t = Text()
+        t.append(f"{label} ", style="error")
+        t.append(target, style="error bold")
+        if msg:
+            t.append(f" {SEP_DOT} ", style="error")
+            t.append(_truncate(msg, 60), style="error")
+        return t
+
+    t = Text()
+    t.append(f"{label} ", style="muted")
+    t.append(target, style="muted bold")
+    suffix = _attachment_size_hint(tc, tr)
+    if suffix:
+        t.append(f" {suffix}", style="muted")
+    return t
+
+
+def _attachment_size_hint(tc: ToolCall, tr: ToolResult) -> str:
+    if tc.name == "read_file" and tr.content:
+        if tr.content.startswith(("Binary file", "Empty file", "(empty")):
+            return f"({tr.content.split(chr(10), 1)[0]})"
+        # read_file prepends a "[path] lines N-M of T" header; parse it for
+        # the true content-line count (raw newline count over-reports by 1
+        # because of the header line itself).
+        from agent_cli.render.tool_formatters import _READ_HEADER_RE  # noqa: PLC0415
+        m = _READ_HEADER_RE.match(tr.content)
+        if m:
+            start, end, total = int(m[2]), int(m[3]), int(m[4])
+            shown = end - start + 1
+            if shown == total:
+                return f"({total} lines)"
+            return f"(lines {start}-{end} of {total})"
+        return ""
+    if tc.name == "list_dir" and tr.content:
+        from agent_cli.render.tool_formatters import _LIST_HEADER_RE  # noqa: PLC0415
+        m = _LIST_HEADER_RE.search(tr.content)
+        if m:
+            return f"({m[2]} entries)"
+    return ""
+
 # Trigger formatter/expander registration via import side-effect.
 from agent_cli.render import tool_formatters as _tool_formatters  # noqa: F401, E402

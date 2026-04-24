@@ -22,6 +22,21 @@ def reset_ctrl_c_state() -> None:
 def build_keybindings() -> KeyBindings:
     kb = KeyBindings()
 
+    @kb.add("tab")
+    def _(event: KeyPressEvent) -> None:
+        buf = event.current_buffer
+        state = buf.complete_state
+        if state is not None:
+            completion = state.current_completion
+            if completion is None:
+                buf.complete_next()
+                state = buf.complete_state
+                completion = state.current_completion if state is not None else None
+            if completion is not None:
+                buf.apply_completion(completion)
+                return
+        buf.start_completion(select_first=True)
+
     @kb.add("c-c")
     def _(event: KeyPressEvent) -> None:
         buf = event.current_buffer

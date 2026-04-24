@@ -45,7 +45,7 @@ def _fmt_duration(n: int) -> str:
     if n < 60:
         return f"{n}s"
     m, s = divmod(n, 60)
-    return f"{m}m{s}s"
+    return f"{m}m {s}s"
 
 
 def _ansi_accent(theme: CliTheme) -> str:

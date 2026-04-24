@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -58,6 +59,9 @@ class PlanAndExecuteAgent(BaseAgent):
         input: str | Message,
         *,
         session: str | BaseSession | None = None,
+        after_input_appended: (
+            Callable[[BaseAgent, Message, str], Awaitable[None]] | None
+        ) = None,
     ) -> AgentResult:
         from datetime import datetime
 
@@ -104,6 +108,9 @@ class PlanAndExecuteAgent(BaseAgent):
         steps: list[StepResult] = []
 
         try:
+            if after_input_appended is not None:
+                await after_input_appended(self, input_msg, input_text)
+
             planner = PlannerAgent(
                 name=f"{self.name}.planner",
                 llm=self.llm,

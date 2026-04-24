@@ -215,3 +215,104 @@ async def test_thinking_word_stable_within_run(fast_thinking: None) -> None:
     used = {w for w in _THINKING_WORDS if w in written}
     assert len(used) == 1, f"word should be fixed per-run, saw: {used}"
     await a._thinking_line.stop()
+
+
+def _attachment_pair(tool_name: str, **args: object) -> tuple[MagicMock, MagicMock]:
+    tc = MagicMock(id="t1", arguments=dict(args))
+    tc.name = tool_name
+    if tool_name == "read_file":
+        path = args.get("file_path", "x")
+        tr = MagicMock(
+            tool_call_id="t1",
+            content=f"[{path}] lines 1-3 of 3\na\nb\nc",
+            is_error=False,
+        )
+    elif tool_name == "list_dir":
+        tr = MagicMock(
+            tool_call_id="t1", content="src/  (5 entries)\n  a\n  b", is_error=False,
+        )
+    else:
+        tr = MagicMock(tool_call_id="t1", content="ok", is_error=False)
+    return tc, tr
+
+
+def _real_console_adapter() -> tuple[CliAdapter, list[str]]:
+    """Adapter with a real Rich console writing to capture buffer."""
+    import io as _io
+    from rich.console import Console as _Console
+    buf = _io.StringIO()
+    con = _Console(file=buf, color_system=None, width=200, theme=FLEXOKI_DARK.rich)
+    a = CliAdapter(con, FLEXOKI_DARK)
+    a.markdown = MagicMock()
+    a.tool_display = MagicMock()
+    return a, [buf]  # buf in list to keep mutable handle
+
+
+async def test_render_attachments_empty_skips() -> None:
+    a, _ = _real_console_adapter()
+    await a.render_attachments([])
+
+    assert a.console.file.getvalue() == ""
+
+
+async def test_render_attachments_header_and_rows() -> None:
+    a, _ = _real_console_adapter()
+    pair = _attachment_pair("read_file", file_path="src/foo.py")
+
+    await a.render_attachments([pair])
+    out = a.console.file.getvalue()
+
+    assert "Loaded into context" in out
+    assert "Read" in out
+    assert "src/foo.py" in out
+    assert "(3 lines)" in out
+
+
+async def test_render_attachments_error_styling() -> None:
+    a, _ = _real_console_adapter()
+    tc = MagicMock(id="t1", arguments={"file_path": "missing.py"})
+    tc.name = "read_file"
+    tr = MagicMock(tool_call_id="t1", content="Error: not found", is_error=False)
+
+    await a.render_attachments([(tc, tr)])
+    out = a.console.file.getvalue()
+
+    assert "Error" in out
+    assert "missing.py" in out
+
+
+async def test_render_attachments_multiple_rows() -> None:
+    a, _ = _real_console_adapter()
+    p1 = _attachment_pair("read_file", file_path="a.py")
+    p2 = _attachment_pair("list_dir", path="src/")
+
+    await a.render_attachments([p1, p2])
+    out = a.console.file.getvalue()
+
+    assert "a.py" in out
+    assert "src/" in out
+    assert out.count("⎿") >= 2
+
+
+async def test_render_attachments_path_with_brackets_safe() -> None:
+    a, _ = _real_console_adapter()
+    tc = MagicMock(id="t1", arguments={"file_path": "src/[gen]/x.py"})
+    tc.name = "read_file"
+    tr = MagicMock(tool_call_id="t1", content="x\ny", is_error=False)
+
+    await a.render_attachments([(tc, tr)])
+    out = a.console.file.getvalue()
+
+    assert "[gen]" in out
+
+
+async def test_render_attachments_multibyte_path_safe() -> None:
+    a, _ = _real_console_adapter()
+    tc = MagicMock(id="t1", arguments={"file_path": "中文/foo.py"})
+    tc.name = "read_file"
+    tr = MagicMock(tool_call_id="t1", content="x", is_error=False)
+
+    await a.render_attachments([(tc, tr)])
+    out = a.console.file.getvalue()
+
+    assert "中文/foo.py" in out

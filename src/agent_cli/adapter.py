@@ -6,11 +6,12 @@ import time
 from typing import Literal
 
 from rich.console import Console, RenderableType
+from rich.text import Text
 
 from agent_cli.render.markdown_stream import MarkdownStream
 from agent_cli.render.status_lines import SubagentLine, ThinkingLine
 from agent_cli.render.tool_display import SUPPRESSED_IN_ROW, ToolDisplay
-from agent_cli.theme import CliTheme
+from agent_cli.theme import CONTINUATION, TOOL_DONE, CliTheme
 from agent_harness.approval.types import ApprovalResult
 from agent_harness.core.message import ToolCall, ToolResult
 
@@ -127,6 +128,30 @@ class CliAdapter:
             self._thinking_line.clear_no_lock()
             self._subagent_line.clear_no_lock()
             self.console.print(renderable)
+            self.console.print()
+
+    async def render_attachments(
+        self, items: list[tuple[ToolCall, ToolResult]],
+    ) -> None:
+        if not items:
+            return
+        from agent_cli.render.tool_display import format_attachment_line  # noqa: PLC0415
+
+        async with self._console_lock:
+            self._thinking_line.clear_no_lock()
+            self._subagent_line.clear_no_lock()
+
+            header = Text()
+            header.append(f"{TOOL_DONE}  ", style="primary")
+            header.append("Loaded into context", style="muted")
+            self.console.print(header)
+
+            for tc, tr in items:
+                line = Text()
+                line.append(f"{CONTINUATION}  ", style="muted")
+                line.append_text(format_attachment_line(tc, tr))
+                self.console.print(line)
+
             self.console.print()
 
     async def start_subagent(self) -> None:

@@ -15,14 +15,15 @@ from agent_cli.approval_handler import CliApprovalHandler, _PendingApproval
 from agent_cli.commands.base import CommandContext
 from agent_cli.commands.registry import CommandRegistry
 from agent_cli.render.ui import make_status_bar_text
-from agent_cli.repl.completer import build_command_completer
+from agent_cli.repl.completer import build_input_completer
 from agent_cli.repl.keybindings import build_keybindings, reset_ctrl_c_state
+from agent_cli.repl.mentions import expand_mentions
 from agent_cli.runtime import background
 from agent_cli.runtime.session import make_save_session
 from agent_cli.runtime.sigint import bind_work
 from agent_cli.theme import APPROVAL, COMPRESSION, PROMPT
 from agent_harness.agent.base import BaseAgent
-from agent_harness.core.message import Message
+from agent_harness.core.message import Message, Role
 from agent_harness.session.base import BaseSession
 
 _DEFAULT_PROMPT = f"{PROMPT} "
@@ -94,6 +95,7 @@ async def _prompt_with_lock(
                 # SIGINT handler via add_signal_handler and removes it
                 # on exit without restoring ours.
                 handle_sigint=False,
+                complete_while_typing=True,
             )
         finally:
             reset_ctrl_c_state()
@@ -109,7 +111,7 @@ async def run_repl(
     handler: CliApprovalHandler,
     pt_session: PromptSession[str],
 ) -> None:
-    pt_session.completer = build_command_completer(registry)
+    pt_session.completer = build_input_completer(registry)
     pt_session.key_bindings = build_keybindings()
     save = make_save_session(agent, session_id, session_backend)
 
@@ -285,7 +287,17 @@ async def _run(
 ) -> None:
     cancelled = False
     adapter.begin_run()
-    task = asyncio.create_task(agent.run(text, session=session_id))
+
+    cb = None
+    if isinstance(text, str):
+        async def cb(a: BaseAgent, msg: Message, t: str) -> None:
+            if msg.role != Role.USER:
+                return
+            await expand_mentions(a, adapter, t)
+
+    task = asyncio.create_task(
+        agent.run(text, session=session_id, after_input_appended=cb),
+    )
     try:
         with bind_work(task):
             try:
