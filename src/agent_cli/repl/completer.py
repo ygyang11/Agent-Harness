@@ -1,4 +1,5 @@
 """REPL input completer — routes by text-before-cursor context."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -26,12 +27,18 @@ class _RoutedCompleter(Completer):
     def get_completions(
         self, document: Document, complete_event: CompleteEvent,
     ) -> Iterable[Completion]:
+        if document.text.startswith("!"):
+            return
         text = document.text_before_cursor
         if text.startswith("/") and " " not in text:
             yield from self._slash.get_completions(document, complete_event)
             return
         if find_at_token(text) is not None:
             yield from self._file.get_completions(document, complete_event)
+
+    def invalidate_file_root(self, root: Path) -> None:
+        if isinstance(self._file, AtFileCompleter):
+            self._file.invalidate(root)
 
 
 def _build_slash_completer(registry: CommandRegistry) -> Completer:
@@ -54,6 +61,11 @@ class AtFileCompleter(Completer):
         self._root = root
         self._root_resolved = root.resolve()
         self._files: list[str] | None = None
+
+    def invalidate(self, root: Path) -> None:
+        self._root = root
+        self._root_resolved = root.resolve()
+        self._files = None
 
     def get_completions(
         self, document: Document, complete_event: CompleteEvent,

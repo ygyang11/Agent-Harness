@@ -1,4 +1,5 @@
-"""Tests for runtime/conversation.py — append_tool_turn."""
+"""Tests for runtime/conversation.py — append_tool_turn + refresh_system_prompt."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent_cli.runtime.conversation import append_tool_turn
+from agent_cli.runtime.conversation import append_tool_turn, refresh_system_prompt
 from agent_harness.core.message import Message, Role, ToolCall, ToolResult
 
 
@@ -103,7 +104,9 @@ async def test_multi_pair_assistant_carries_all_tcs() -> None:
     assert captured[0].tool_calls is not None
     assert [tc.id for tc in captured[0].tool_calls] == ["id_1", "id_2", "id_3"]
     assert [m.tool_result.tool_call_id for m in captured[1:]] == [
-        "id_1", "id_2", "id_3",
+        "id_1",
+        "id_2",
+        "id_3",
     ]
 
 
@@ -137,3 +140,29 @@ async def test_shield_completes_writes_when_outer_cancelled() -> None:
     assert len(captured) == 3, (
         f"shield should let memory writes finish; got {len(captured)} entries"
     )
+
+
+class TestRefreshSystemPrompt:
+    def test_rebuilds_and_assigns(self) -> None:
+        agent = MagicMock()
+        builder = MagicMock()
+        builder.build = MagicMock(return_value="NEW_PROMPT")
+        agent._prompt_builder = builder
+        agent._make_builder_context = MagicMock(return_value={"key": "ctx"})
+        agent.system_prompt = "OLD_PROMPT"
+
+        refresh_system_prompt(agent)
+
+        builder.build.assert_called_once_with({"key": "ctx"})
+        assert agent.system_prompt == "NEW_PROMPT"
+
+    def test_does_not_touch_memory_directly(self) -> None:
+        agent = MagicMock()
+        agent._prompt_builder.build = MagicMock(return_value="X")
+        agent._make_builder_context = MagicMock(return_value={})
+        msgs: list[Message] = [Message.system("OLD")]
+        agent.context.short_term_memory._messages = msgs
+
+        refresh_system_prompt(agent)
+
+        assert msgs[0].content == "OLD"

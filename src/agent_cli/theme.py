@@ -26,6 +26,7 @@ class Palette:
     diff_remove_bg: str
     diff_hunk_bg: str
     scrollbar_bg: str
+    shell_lane_bg: str
 
 
 # ── Bundle ─────────────────────────────────────────────────────────────
@@ -74,6 +75,7 @@ def _build_theme(name: str, p: Palette) -> CliTheme:
             "bottom-toolbar":                          f"noreverse fg:{p.secondary}",
             "bottom-toolbar.text":                     f"noreverse fg:{p.secondary} bold italic",
             "paste-placeholder":                       f"fg:{p.primary} bold",
+            "shell-line":                              f"bg:{p.shell_lane_bg} fg:{p.primary} bold",
         }),
     )
 
@@ -94,6 +96,7 @@ FLEXOKI_DARK = _build_theme("flexoki-dark", Palette(
     diff_remove_bg="#3d0000",
     diff_hunk_bg="#1C1B1A",
     scrollbar_bg="#1C1B1A",
+    shell_lane_bg="#3D3935",
 ))
 
 
@@ -112,6 +115,7 @@ TOKYO_NIGHT = _build_theme("tokyo-night", Palette(
     diff_remove_bg="#3A1F27",
     diff_hunk_bg="#1F2335",
     scrollbar_bg="#1F2335",
+    shell_lane_bg="#2F344E",
 ))
 
 
@@ -130,6 +134,7 @@ CATPPUCCIN_MOCHA = _build_theme("catppuccin-mocha", Palette(
     diff_remove_bg="#3A2D33",
     diff_hunk_bg="#313244",
     scrollbar_bg="#313244",
+    shell_lane_bg="#3F4054",
 ))
 
 
@@ -148,6 +153,7 @@ ROSE_PINE = _build_theme("rose-pine", Palette(
     diff_remove_bg="#3A252D",
     diff_hunk_bg="#1F1D2E",
     scrollbar_bg="#1F1D2E",
+    shell_lane_bg="#33304B",
 ))
 
 
@@ -166,6 +172,7 @@ KANAGAWA = _build_theme("kanagawa", Palette(
     diff_remove_bg="#3D2426",
     diff_hunk_bg="#2A2A37",
     scrollbar_bg="#2A2A37",
+    shell_lane_bg="#37374A",
 ))
 
 
@@ -184,6 +191,7 @@ EVERFOREST_DARK = _build_theme("everforest-dark", Palette(
     diff_remove_bg="#4E3E43",
     diff_hunk_bg="#384247",
     scrollbar_bg="#384247",
+    shell_lane_bg="#4D5862",
 ))
 
 
@@ -202,6 +210,7 @@ DRACULA = _build_theme("dracula", Palette(
     diff_remove_bg="#3A1F2C",
     diff_hunk_bg="#343746",
     scrollbar_bg="#343746",
+    shell_lane_bg="#535672",
 ))
 
 

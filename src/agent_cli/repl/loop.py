@@ -1,4 +1,5 @@
 """REPL main loop with 4-way race: bg approval / bg result / user input / bg wake."""
+
 from __future__ import annotations
 
 import asyncio
@@ -23,6 +24,7 @@ from agent_cli.repl.mentions import expand_mentions
 from agent_cli.repl.paste import PastePlaceholderProcessor, PasteStore
 from agent_cli.runtime import background
 from agent_cli.runtime.session import make_save_session
+from agent_cli.runtime.shell import ShellState
 from agent_cli.runtime.sigint import bind_work
 from agent_cli.theme import APPROVAL, COMPRESSION, PROMPT
 from agent_harness.agent.base import BaseAgent
@@ -110,7 +112,7 @@ async def _prompt_with_lock(
             pt_session.input_processors = prev_processors
             reset_ctrl_c_state()
 
- 
+
 async def run_repl(
     agent: BaseAgent,
     console: Console,
@@ -120,6 +122,7 @@ async def run_repl(
     adapter: CliAdapter,
     handler: CliApprovalHandler,
     pt_session: PromptSession[str],
+    shell_state: ShellState,
 ) -> None:
     paste_store = PasteStore()
     paste_processors: list[Processor] = [PastePlaceholderProcessor()]
@@ -195,6 +198,7 @@ async def run_repl(
                 if raw.strip():
                     if await _handle_line(
                         raw, agent, console, registry, session_id, save, adapter, handler,
+                        shell_state, pt_session
                     ):
                         break
                 continue
@@ -263,8 +267,33 @@ async def _handle_line(
     save: Callable[[], Awaitable[None]],
     adapter: CliAdapter,
     handler: CliApprovalHandler,
+    shell_state: ShellState,
+    pt_session: PromptSession[str],
 ) -> bool:
     console.print()
+
+    if line.startswith("!"):
+        cmd = line[1:].lstrip()
+        if not cmd:
+            return False
+        from agent_cli.runtime.shell import exec_shell  # noqa: PLC0415
+
+        completer = pt_session.completer
+        assert completer is not None
+        task = asyncio.create_task(
+            exec_shell(shell_state, cmd, agent, completer, adapter),
+        )
+        try:
+            with bind_work(task):
+                await task
+        except asyncio.CancelledError:
+            console.print("[dim]Command cancelled.[/dim]")
+            console.print()
+        except Exception as e:
+            console.print(f"[error]Unexpected shell error: {e}[/error]")
+            console.print()
+        return False
+
     ctx = CommandContext(
         agent=agent,
         session_id=session_id,
@@ -311,6 +340,7 @@ async def _run(
 
     cb = None
     if isinstance(text, str):
+
         async def cb(a: BaseAgent, msg: Message, t: str) -> None:
             if msg.role != Role.USER:
                 return
@@ -337,7 +367,5 @@ async def _run(
         # banner AFTER so it doesn't get overwritten by late-arriving chunks.
         await adapter.end_step()
     if cancelled:
-        console.print(
-            "[dim]⎯⎯ Interrupted · what should the agent do differently? ⎯⎯[/dim]"
-        )
+        console.print("[dim]⎯⎯ Interrupted · what should the agent do differently? ⎯⎯[/dim]")
         console.print()

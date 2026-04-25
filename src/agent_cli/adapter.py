@@ -1,4 +1,5 @@
 """CliAdapter — phase state machine coordinating streaming output."""
+
 from __future__ import annotations
 
 import asyncio
@@ -92,11 +93,7 @@ class CliAdapter:
     async def on_retry(self, info: LLMRetryInfo) -> None:
         await self._enter_none()
         err_name = rich_escape(type(info.error).__name__)
-        line = (
-            f"[muted]── Retrying LLM "
-            f"({info.attempt}/{info.max_retries}) · "
-            f"{err_name} ──[/muted]"
-        )
+        line = f"[muted]── Retrying LLM ({info.attempt}/{info.max_retries}) · {err_name} ──[/muted]"
         await self.print_inline(line)
 
     async def on_tool_call(self, tool_call: ToolCall) -> None:
@@ -151,7 +148,8 @@ class CliAdapter:
             self.console.print()
 
     async def render_attachments(
-        self, items: list[tuple[ToolCall, ToolResult]],
+        self,
+        items: list[tuple[ToolCall, ToolResult]],
     ) -> None:
         if not items:
             return
@@ -172,6 +170,22 @@ class CliAdapter:
                 line.append_text(format_attachment_line(tc, tr))
                 self.console.print(line)
 
+            self.console.print()
+
+    async def on_shell_run(
+        self,
+        command: str,
+        exit_code: int,
+        output: str,
+    ) -> None:
+        from agent_cli.render.tool_display import format_shell_run  # noqa: PLC0415
+
+        await self._enter_none()
+        async with self._console_lock:
+            self._thinking_line.clear_no_lock()
+            self._subagent_line.clear_no_lock()
+            for r in format_shell_run(command, exit_code, output):
+                self.console.print(r)
             self.console.print()
 
     async def start_subagent(self) -> None:

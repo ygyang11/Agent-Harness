@@ -1,4 +1,5 @@
 """Short-term memory manipulation outside the normal agent.run flow."""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,9 +13,7 @@ async def append_tool_turn(
     agent: BaseAgent,
     pairs: list[tuple[ToolCall, ToolResult]],
     *,
-    render: Callable[
-        [list[tuple[ToolCall, ToolResult]]], Awaitable[None]
-    ] | None = None,
+    render: Callable[[list[tuple[ToolCall, ToolResult]]], Awaitable[None]] | None = None,
 ) -> None:
     """Append ``assistant(tool_calls) + tool×N`` in declaration order.
 
@@ -32,13 +31,16 @@ async def append_tool_turn(
     await asyncio.shield(_write(agent, pairs))
 
 
+def refresh_system_prompt(agent: BaseAgent) -> None:
+    agent.system_prompt = agent._prompt_builder.build(agent._make_builder_context())
+
+
 async def _write(
-    agent: BaseAgent, pairs: list[tuple[ToolCall, ToolResult]],
+    agent: BaseAgent,
+    pairs: list[tuple[ToolCall, ToolResult]],
 ) -> None:
     tcs = [tc for tc, _ in pairs]
-    await agent.context.short_term_memory.add_message(
-        Message.assistant(content="", tool_calls=tcs)
-    )
+    await agent.context.short_term_memory.add_message(Message.assistant(content="", tool_calls=tcs))
     for _, tr in pairs:
         await agent.context.short_term_memory.add_message(
             Message.tool(

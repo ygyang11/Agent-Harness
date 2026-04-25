@@ -1,4 +1,5 @@
 """CLIApp — top-level lifecycle and entrypoint."""
+
 from __future__ import annotations
 
 import argparse
@@ -24,6 +25,7 @@ async def _async_main() -> int:
     # Framework emits INFO logs via stderr StreamHandler; these break Rich
     # Live's in-place repaint. Raise to WARNING for interactive CLI.
     from agent_harness import setup_logging
+
     setup_logging("WARNING")
 
     from prompt_toolkit import PromptSession
@@ -39,7 +41,9 @@ async def _async_main() -> int:
     from agent_cli.config import load_config
     from agent_cli.hooks import CliHooks
     from agent_cli.render.ui import render_welcome
+    from agent_cli.repl.lexer import ShellLineLexer
     from agent_cli.repl.loop import run_repl
+    from agent_cli.runtime.shell import ShellState
     from agent_cli.theme import load_saved_theme
     from agent_harness.session.file_session import FileSession
 
@@ -53,9 +57,13 @@ async def _async_main() -> int:
         output=create_output(),
         refresh_interval=0.1,
         style=theme.completion,
+        lexer=ShellLineLexer(),
     )
+    shell_state = ShellState()
     approval_handler = CliApprovalHandler(
-        console=console, adapter=adapter, pt_session=pt_session,
+        console=console,
+        adapter=adapter,
+        pt_session=pt_session,
     )
     hooks = CliHooks(adapter, approval_handler=approval_handler)
     agent = create_cli_agent(hooks=hooks, approval_handler=approval_handler)
@@ -65,9 +73,7 @@ async def _async_main() -> int:
     register_builtin(registry)
     backend = FileSession(session_id)
 
-    config_source = (
-        str(config_result.path) if config_result.path else "Defaults env"
-    )
+    config_source = str(config_result.path) if config_result.path else "Defaults env"
     render_welcome(
         console,
         version=__version__,
@@ -77,22 +83,30 @@ async def _async_main() -> int:
     )
     if config_result.bootstrapped:
         console.print(
-            f"[dim]config created at [bold]{config_result.path}[/bold] — "
-            "edit to customize[/dim]\n"
+            f"[dim]config created at [bold]{config_result.path}[/bold] — edit to customize[/dim]\n"
         )
 
     # Take over SIGINT from asyncio.run's default handler. Between-turn
     # idle absorbs Ctrl+C silently; per-turn task-bound handlers (via
     # runtime.sigint.bind_work) cancel only their own work task.
     from agent_cli.runtime.sigint import install_idle, uninstall
+
     install_idle()
 
     try:
         await run_repl(
-            agent, console, session_id, registry, backend, adapter,
-            approval_handler, pt_session,
+            agent,
+            console,
+            session_id,
+            registry,
+            backend,
+            adapter,
+            approval_handler,
+            pt_session,
+            shell_state,
         )
     finally:
+        shell_state.cleanup()
         uninstall()
         await adapter.end_step()
     return 0

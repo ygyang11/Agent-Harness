@@ -212,7 +212,7 @@ class BaseAgent(ABC, EventEmitter):
             "cwd": str(Path.cwd()),
             "skill_loader": skill_loader,
         }
-    
+
     async def _collect_background_results(self) -> list[Any]:
         """Harvest completed background tasks and inject results into memory."""
         completed = self._bg_manager.collect_completed()
@@ -259,19 +259,17 @@ class BaseAgent(ABC, EventEmitter):
                 signal.streak,
             )
 
-    async def _should_inject_system_prompt(self) -> bool:
+    async def _sync_system_prompt(self) -> None:
         if not self.system_prompt:
-            return False
-
-        context_messages = await self.context.short_term_memory.get_context_messages()
-        if not context_messages:
-            return True
-
-        first_message = context_messages[0]
-        return not (
-            first_message.role == Role.SYSTEM
-            and (first_message.content or "") == self.system_prompt
-        )
+            return
+        msgs = self.context.short_term_memory._messages
+        if not msgs:
+            msgs.append(Message.system(self.system_prompt))
+        elif msgs[0].role == Role.SYSTEM:
+            if msgs[0].content != self.system_prompt:
+                msgs[0] = msgs[0].model_copy(update={"content": self.system_prompt})
+        else:
+            msgs.insert(0, Message.system(self.system_prompt))
 
     @property
     def tools(self) -> list[BaseTool]:
@@ -283,15 +281,12 @@ class BaseAgent(ABC, EventEmitter):
         schemas: list[ToolSchema] = self.tool_registry.get_schemas()
         return schemas
 
-
     async def run(
         self,
         input: str | Message,
         *,
         session: str | BaseSession | None = None,
-        after_input_appended: (
-            Callable[[BaseAgent, Message, str], Awaitable[None]] | None
-        ) = None,
+        after_input_appended: (Callable[[BaseAgent, Message, str], Awaitable[None]] | None) = None,
     ) -> AgentResult:
         """Main execution loop.
 
@@ -327,7 +322,7 @@ class BaseAgent(ABC, EventEmitter):
             if state:
                 await self.context.restore_from_state(state, self.system_prompt)
                 self._session_created_at = state.created_at
-                
+
                 compressor = self.context.short_term_memory.compressor
                 if compressor:
                     compressor.restore_runtime_state(state.messages)
@@ -339,9 +334,7 @@ class BaseAgent(ABC, EventEmitter):
                 )
 
                 if self._approval:
-                    self._approval.import_session_grants(
-                        state.metadata.get("_approval_grants", {})
-                    )
+                    self._approval.import_session_grants(state.metadata.get("_approval_grants", {}))
 
         # Normalize input
         if isinstance(input, str):
@@ -352,8 +345,7 @@ class BaseAgent(ABC, EventEmitter):
             input_text = input.content or ""
 
         # Initialize context
-        if await self._should_inject_system_prompt():
-            await self.context.short_term_memory.add_message(Message.system(self.system_prompt))
+        await self._sync_system_prompt()
         await self.context.short_term_memory.add_message(input_msg)
         self.context.state.transition(AgentState.THINKING)
 
@@ -485,9 +477,7 @@ class BaseAgent(ABC, EventEmitter):
                     bg_wait_task = _asyncio.create_task(self._bg_manager.wait_next())
                     wait_set.add(bg_wait_task)
 
-                done, _ = await _asyncio.wait(
-                    wait_set, return_when=_asyncio.FIRST_COMPLETED
-                )
+                done, _ = await _asyncio.wait(wait_set, return_when=_asyncio.FIRST_COMPLETED)
 
                 # Cancel bg observer if it didn't fire
                 if bg_wait_task and bg_wait_task not in done:

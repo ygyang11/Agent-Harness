@@ -37,7 +37,7 @@ def test_render_welcome_emits_tagline_and_meta() -> None:
     assert "session" in out
     assert "fresh" in out
     assert "/resume to restore" in out
-    assert "commands" in out and "files" in out and "help" in out
+    assert "commands" in out and "files" in out and "shell" in out
 
 
 def test_fmt_thresholds() -> None:

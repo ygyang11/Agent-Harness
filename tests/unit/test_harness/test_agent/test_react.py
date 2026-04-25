@@ -1,4 +1,5 @@
 """Tests for agent_harness.agent.react — ReActAgent with MockLLM."""
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -10,7 +11,7 @@ from agent_app.tools.skill import skill_tool
 from agent_harness.agent.react import ReActAgent
 from agent_harness.core.config import HarnessConfig, SkillConfig
 from agent_harness.core.errors import MaxStepsExceededError
-from agent_harness.core.message import Message
+from agent_harness.core.message import Message, Role
 from agent_harness.prompt.sections import DEFAULT_INTRO
 from agent_harness.session.base import SessionState
 from agent_harness.session.memory_session import InMemorySession
@@ -139,9 +140,7 @@ def skills_dir(tmp_path: Path) -> Path:
     root = tmp_path / "skills"
     sd = root / "demo"
     sd.mkdir(parents=True)
-    (sd / "SKILL.md").write_text(
-        "---\nname: demo\ndescription: Demo skill.\n---\n\nDemo body.\n"
-    )
+    (sd / "SKILL.md").write_text("---\nname: demo\ndescription: Demo skill.\n---\n\nDemo body.\n")
     return root
 
 
@@ -179,21 +178,23 @@ class TestSkillPromptSupplement:
         assert "Custom prompt." in agent.system_prompt
         assert "# Skills" not in agent.system_prompt
 
-    async def test_should_inject_consistent_with_supplement(
+    async def test_sync_system_prompt_is_idempotent(
         self,
         skills_dir: Path,
         restore_harness_config: None,
     ) -> None:
         HarnessConfig._instance = HarnessConfig(skill=SkillConfig(dirs=[str(skills_dir)]))
         agent = ReActAgent(name="test", tools=[skill_tool])
+        msgs = agent.context.short_term_memory._messages
 
-        assert await agent._should_inject_system_prompt() is True
+        await agent._sync_system_prompt()
+        assert len(msgs) == 1
+        assert msgs[0].role == Role.SYSTEM
+        assert msgs[0].content == agent.system_prompt
 
-        await agent.context.short_term_memory.add_message(
-            Message.system(agent.system_prompt)
-        )
-
-        assert await agent._should_inject_system_prompt() is False
+        await agent._sync_system_prompt()
+        assert len(msgs) == 1
+        assert msgs[0].content == agent.system_prompt
 
     def test_default_intro_when_no_system_prompt(self) -> None:
         agent = ReActAgent(name="test")

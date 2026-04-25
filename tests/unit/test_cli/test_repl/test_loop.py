@@ -1,4 +1,5 @@
 """REPL loop helpers + race + shutdown."""
+
 from __future__ import annotations
 
 import asyncio
@@ -162,19 +163,132 @@ async def test_run_ends_step_on_success() -> None:
 
 
 async def test_handle_line_cancelled_keeps_repl_alive() -> None:
+    from agent_cli.runtime.shell import ShellState
+
     registry = MagicMock()
     registry.dispatch = AsyncMock(side_effect=asyncio.CancelledError())
     console = MagicMock()
+    pt_session = MagicMock()
+    pt_session.completer = MagicMock()
 
     should_exit = await _handle_line(
-        "/slow", MagicMock(), console, registry, "sid", AsyncMock(), MagicMock(),
+        "/slow",
         MagicMock(),
+        console,
+        registry,
+        "sid",
+        AsyncMock(),
+        MagicMock(),
+        MagicMock(),
+        ShellState(),
+        pt_session,
     )
 
     assert should_exit is False
     assert any(
-        c.args and "cancelled" in str(c.args[0]).lower()
-        for c in console.print.call_args_list
+        c.args and "cancelled" in str(c.args[0]).lower() for c in console.print.call_args_list
+    )
+
+
+async def test_handle_line_shell_lane_dispatches_to_exec_shell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_cli.runtime.shell import ShellState
+
+    registry = MagicMock()
+    registry.dispatch = AsyncMock(return_value=None)
+    console = MagicMock()
+    pt_session = MagicMock()
+    pt_session.completer = MagicMock()
+    agent = MagicMock()
+
+    captured: list[tuple[object, ...]] = []
+
+    async def fake_exec_shell(state, command, ag, comp, ad):
+        captured.append((command, ag, comp))
+
+    monkeypatch.setattr(
+        "agent_cli.runtime.shell.exec_shell",
+        fake_exec_shell,
+    )
+
+    should_exit = await _handle_line(
+        "!ls -la",
+        agent,
+        console,
+        registry,
+        "sid",
+        AsyncMock(),
+        MagicMock(),
+        MagicMock(),
+        ShellState(),
+        pt_session,
+    )
+
+    assert should_exit is False
+    assert len(captured) == 1
+    assert captured[0][0] == "ls -la"
+    registry.dispatch.assert_not_called()
+
+
+async def test_handle_line_bare_bang_is_noop() -> None:
+    from agent_cli.runtime.shell import ShellState
+
+    registry = MagicMock()
+    registry.dispatch = AsyncMock(return_value=None)
+    console = MagicMock()
+    pt_session = MagicMock()
+    pt_session.completer = MagicMock()
+
+    should_exit = await _handle_line(
+        "!",
+        MagicMock(),
+        console,
+        registry,
+        "sid",
+        AsyncMock(),
+        MagicMock(),
+        MagicMock(),
+        ShellState(),
+        pt_session,
+    )
+
+    assert should_exit is False
+    registry.dispatch.assert_not_called()
+
+
+async def test_handle_line_shell_cancellation_renders_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_cli.runtime.shell import ShellState
+
+    console = MagicMock()
+    pt_session = MagicMock()
+    pt_session.completer = MagicMock()
+
+    async def cancelling_exec(state, command, ag, comp, ad):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(
+        "agent_cli.runtime.shell.exec_shell",
+        cancelling_exec,
+    )
+
+    await _handle_line(
+        "!sleep 30",
+        MagicMock(),
+        console,
+        MagicMock(),
+        "sid",
+        AsyncMock(),
+        MagicMock(),
+        MagicMock(),
+        ShellState(),
+        pt_session,
+    )
+
+    assert any(
+        c.args and "cancelled" in str(c.args[0]).lower() for c in console.print.call_args_list
     )
 
 
@@ -236,6 +350,8 @@ def _make_run_repl_mocks(prompt_results: list[object]):
 
 
 async def _drive_run_repl(mocks: dict[str, object]) -> None:
+    from agent_cli.runtime.shell import ShellState
+
     await run_repl(
         mocks["agent"],
         mocks["console"],
@@ -245,6 +361,7 @@ async def _drive_run_repl(mocks: dict[str, object]) -> None:
         mocks["adapter"],
         mocks["handler"],
         mocks["pt_session"],
+        ShellState(),
     )
 
 
@@ -253,14 +370,16 @@ async def test_run_repl_expired_placeholder_prints_notice_and_dispatches(
 ) -> None:
     mocks = _make_run_repl_mocks(["[Pasted text #99]", EOFError])
     monkeypatch.setattr(
-        "agent_cli.repl.loop.background.has_running", lambda agent: False,
+        "agent_cli.repl.loop.background.has_running",
+        lambda agent: False,
     )
     monkeypatch.setattr(
         "agent_cli.repl.loop.background.collect_results",
         AsyncMock(return_value=False),
     )
     monkeypatch.setattr(
-        "agent_cli.repl.loop.background.shutdown", AsyncMock(),
+        "agent_cli.repl.loop.background.shutdown",
+        AsyncMock(),
     )
 
     captured: list[str] = []
@@ -285,14 +404,16 @@ async def test_run_repl_whitespace_only_expansion_skips_dispatch(
     # without invoking _handle_line, regardless of paste store state.
     mocks = _make_run_repl_mocks(["   \n  ", EOFError])
     monkeypatch.setattr(
-        "agent_cli.repl.loop.background.has_running", lambda agent: False,
+        "agent_cli.repl.loop.background.has_running",
+        lambda agent: False,
     )
     monkeypatch.setattr(
         "agent_cli.repl.loop.background.collect_results",
         AsyncMock(return_value=False),
     )
     monkeypatch.setattr(
-        "agent_cli.repl.loop.background.shutdown", AsyncMock(),
+        "agent_cli.repl.loop.background.shutdown",
+        AsyncMock(),
     )
 
     called = MagicMock()
@@ -314,14 +435,16 @@ async def test_run_repl_plain_input_no_notice_no_expansion(
 ) -> None:
     mocks = _make_run_repl_mocks(["hello world", EOFError])
     monkeypatch.setattr(
-        "agent_cli.repl.loop.background.has_running", lambda agent: False,
+        "agent_cli.repl.loop.background.has_running",
+        lambda agent: False,
     )
     monkeypatch.setattr(
         "agent_cli.repl.loop.background.collect_results",
         AsyncMock(return_value=False),
     )
     monkeypatch.setattr(
-        "agent_cli.repl.loop.background.shutdown", AsyncMock(),
+        "agent_cli.repl.loop.background.shutdown",
+        AsyncMock(),
     )
 
     captured: list[str] = []
@@ -345,14 +468,16 @@ async def test_run_repl_passes_paste_processor_to_prompt(
 
     mocks = _make_run_repl_mocks([EOFError])
     monkeypatch.setattr(
-        "agent_cli.repl.loop.background.has_running", lambda agent: False,
+        "agent_cli.repl.loop.background.has_running",
+        lambda agent: False,
     )
     monkeypatch.setattr(
         "agent_cli.repl.loop.background.collect_results",
         AsyncMock(return_value=False),
     )
     monkeypatch.setattr(
-        "agent_cli.repl.loop.background.shutdown", AsyncMock(),
+        "agent_cli.repl.loop.background.shutdown",
+        AsyncMock(),
     )
 
     await _drive_run_repl(mocks)
@@ -395,5 +520,3 @@ async def test_prompt_with_lock_restores_input_processors() -> None:
     )
 
     assert pt_session.input_processors is sentinel
-
-

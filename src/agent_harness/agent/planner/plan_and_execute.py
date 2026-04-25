@@ -1,4 +1,5 @@
 """PlanAndExecuteAgent — multi-agent plan-execute-evaluate orchestrator."""
+
 from __future__ import annotations
 
 import logging
@@ -59,9 +60,7 @@ class PlanAndExecuteAgent(BaseAgent):
         input: str | Message,
         *,
         session: str | BaseSession | None = None,
-        after_input_appended: (
-            Callable[[BaseAgent, Message, str], Awaitable[None]] | None
-        ) = None,
+        after_input_appended: (Callable[[BaseAgent, Message, str], Awaitable[None]] | None) = None,
     ) -> AgentResult:
         from datetime import datetime
 
@@ -75,10 +74,7 @@ class PlanAndExecuteAgent(BaseAgent):
         if self.context.state.is_terminal:
             self.context.state.reset()
 
-        if (
-            resolved_session
-            and not await self.context.short_term_memory.get_context_messages()
-        ):
+        if resolved_session and not await self.context.short_term_memory.get_context_messages():
             state = await resolved_session.load_state()
             if state:
                 await self.context.restore_from_state(state, self.system_prompt)
@@ -94,10 +90,7 @@ class PlanAndExecuteAgent(BaseAgent):
             input_msg = input
             input_text = input.content or ""
 
-        if await self._should_inject_system_prompt():
-            await self.context.short_term_memory.add_message(
-                Message.system(self.system_prompt)
-            )
+        await self._sync_system_prompt()
         await self.context.short_term_memory.add_message(input_msg)
 
         self.context.state.transition(AgentState.THINKING)
@@ -169,9 +162,7 @@ class PlanAndExecuteAgent(BaseAgent):
                 self.context.state.transition(AgentState.ACTING)
 
                 executor.context.working_memory.set("plan", plan.progress_summary)
-                executor.context.working_memory.set(
-                    "current_step", current.description
-                )
+                executor.context.working_memory.set("current_step", current.description)
 
                 exec_result = await executor.run(current.description)
                 total_usage = total_usage + exec_result.usage
@@ -179,17 +170,13 @@ class PlanAndExecuteAgent(BaseAgent):
                 current.status = "done"
                 current.result = exec_result.output
 
-                steps.append(
-                    StepResult(thought=f"Executed step [{current.id}]")
-                )
+                steps.append(StepResult(thought=f"Executed step [{current.id}]"))
 
                 self.context.state.transition(AgentState.OBSERVING)
                 self.context.state.transition(AgentState.THINKING)
 
                 replanner.context.working_memory.set("goal", plan.goal)
-                replanner.context.working_memory.set(
-                    "plan", plan.detailed_progress
-                )
+                replanner.context.working_memory.set("plan", plan.detailed_progress)
                 replanner.context.working_memory.set(
                     "current_step",
                     f"Step [{current.id}] result: {current.result}",
@@ -218,17 +205,10 @@ class PlanAndExecuteAgent(BaseAgent):
                         for s in plan.steps
                         if s.status not in ("done", "failed")
                     ]
-                    completed = [
-                        s
-                        for s in plan.steps
-                        if s.status in ("done", "failed")
-                    ]
+                    completed = [s for s in plan.steps if s.status in ("done", "failed")]
                     plan.steps = completed + decision.updated_steps
 
-                    reason_text = (
-                        decision.reason.strip()
-                        or "No reason provided by replanner."
-                    )
+                    reason_text = decision.reason.strip() or "No reason provided by replanner."
                     change_summary = self._summarize_plan_change(
                         previous_pending,
                         decision.updated_steps,
@@ -264,9 +244,7 @@ class PlanAndExecuteAgent(BaseAgent):
             if not final_output:
                 final_output = plan.progress_summary
 
-            await self.context.short_term_memory.add_message(
-                Message.assistant(final_output)
-            )
+            await self.context.short_term_memory.add_message(Message.assistant(final_output))
             self.context.state.transition(AgentState.FINISHED)
             messages = await self.context.short_term_memory.get_context_messages()
 
@@ -291,9 +269,7 @@ class PlanAndExecuteAgent(BaseAgent):
 
         except Exception as e:
             await self.hooks.on_error(self.name, e)
-            await self.emit(
-                "agent.run.error", agent=self.name, error=str(e)
-            )
+            await self.emit("agent.run.error", agent=self.name, error=str(e))
             if not self.context.state.is_terminal:
                 self.context.state.transition(AgentState.ERROR)
             raise
@@ -302,7 +278,8 @@ class PlanAndExecuteAgent(BaseAgent):
             if resolved_session:
                 now = datetime.now()
                 ss = self.context.to_session_state(
-                    resolved_session.session_id, agent_name=self.name,
+                    resolved_session.session_id,
+                    agent_name=self.name,
                 )
                 ss.created_at = self._session_created_at or now
                 ss.updated_at = now
@@ -324,27 +301,15 @@ class PlanAndExecuteAgent(BaseAgent):
         previous_pending: list[PlanStep],
         updated_steps: list[PlanStep],
     ) -> str:
-        previous_signatures = {
-            cls._step_signature(step) for step in previous_pending
-        }
-        updated_signatures = {
-            cls._step_signature(step) for step in updated_steps
-        }
+        previous_signatures = {cls._step_signature(step) for step in previous_pending}
+        updated_signatures = {cls._step_signature(step) for step in updated_steps}
 
-        kept = [
-            step
-            for step in updated_steps
-            if cls._step_signature(step) in previous_signatures
-        ]
+        kept = [step for step in updated_steps if cls._step_signature(step) in previous_signatures]
         removed = [
-            step
-            for step in previous_pending
-            if cls._step_signature(step) not in updated_signatures
+            step for step in previous_pending if cls._step_signature(step) not in updated_signatures
         ]
         added = [
-            step
-            for step in updated_steps
-            if cls._step_signature(step) not in previous_signatures
+            step for step in updated_steps if cls._step_signature(step) not in previous_signatures
         ]
 
         sections = [
@@ -369,13 +334,12 @@ class PlanAndExecuteAgent(BaseAgent):
             if isinstance(data, dict):
                 raw_steps = data.get("steps", [])
                 parsed_steps = [
-                    PlanStep(**s) if isinstance(s, dict)
+                    PlanStep(**s)
+                    if isinstance(s, dict)
                     else PlanStep(id=str(i), description=str(s))
                     for i, s in enumerate(raw_steps)
                 ]
-                return Plan(
-                    goal=data.get("goal", fallback_goal), steps=parsed_steps
-                )
+                return Plan(goal=data.get("goal", fallback_goal), steps=parsed_steps)
         except (ValueError, TypeError):
             pass
         return Plan(
@@ -392,7 +356,8 @@ class PlanAndExecuteAgent(BaseAgent):
                 updated = None
                 if data.get("updated_steps"):
                     updated = [
-                        PlanStep(**s) if isinstance(s, dict)
+                        PlanStep(**s)
+                        if isinstance(s, dict)
                         else PlanStep(id=str(i), description=str(s))
                         for i, s in enumerate(data["updated_steps"])
                     ]

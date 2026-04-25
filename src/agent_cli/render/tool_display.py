@@ -1,4 +1,5 @@
 """ToolDisplay — Rich.Live multi-row status table + post-batch expansion."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -53,6 +54,7 @@ def register_result_formatter(tool_name: str) -> Callable[[ResultFormatter], Res
     def wrap(fn: ResultFormatter) -> ResultFormatter:
         _RESULT_FORMATTERS[tool_name] = fn
         return fn
+
     return wrap
 
 
@@ -60,6 +62,7 @@ def register_expander(tool_name: str) -> Callable[[Expander], Expander]:
     def wrap(fn: Expander) -> Expander:
         _EXPANDERS[tool_name] = fn
         return fn
+
     return wrap
 
 
@@ -121,8 +124,7 @@ def _args_preview(name: str, arguments: dict[str, object]) -> str:
     keys = _PRIMARY_ARG_KEYS.get(name)
     if keys is not None:
         values: list[object] = [
-            arguments[k] for k in keys
-            if k in arguments and arguments[k] not in (None, "")
+            arguments[k] for k in keys if k in arguments and arguments[k] not in (None, "")
         ]
     else:
         values = [v for v in arguments.values() if v not in (None, "")]
@@ -235,9 +237,13 @@ class ToolDisplay:
             return Text(LEFT_BAR, style="primary")
 
         rows: list[RenderableType] = [_bar_only()]
-        rows.append(_bar(Text.from_markup(
-            f"[primary]{TASKS_HEADER}[/primary] [bold]Tasks [{done}/{total}][/bold]"
-        )))
+        rows.append(
+            _bar(
+                Text.from_markup(
+                    f"[primary]{TASKS_HEADER}[/primary] [bold]Tasks [{done}/{total}][/bold]"
+                )
+            )
+        )
         for t in todos:
             status = t.get("status", "pending")
             content = rich_escape(t.get("content", ""))
@@ -246,13 +252,9 @@ class ToolDisplay:
                     f"  [success]{TOOL_DONE}[/success] [muted]{content}[/muted]"
                 )
             elif status == "in_progress":
-                body = Text.from_markup(
-                    f"  [accent]{TODO_IN_PROGRESS}[/accent] {content}"
-                )
+                body = Text.from_markup(f"  [accent]{TODO_IN_PROGRESS}[/accent] {content}")
             else:
-                body = Text.from_markup(
-                    f"  [muted]{TODO_PENDING} {content}[/muted]"
-                )
+                body = Text.from_markup(f"  [muted]{TODO_PENDING} {content}[/muted]")
             rows.append(_bar(body))
         rows.append(_bar_only())
         self._console.print()
@@ -296,7 +298,7 @@ def _format_result_line(row: _ToolRow) -> Text | None:
         return None
 
     if row.status == "denied":
-        summary = f'Denied {SEP_DOT} Do not run this tool.'
+        summary = f"Denied {SEP_DOT} Do not run this tool."
         value_style = "error"
     elif _is_error_result(row.result):
         content = (row.result.content if row.result is not None else "").replace("\n", " ")
@@ -359,6 +361,7 @@ def _attachment_size_hint(tc: ToolCall, tr: ToolResult) -> str:
         # the true content-line count (raw newline count over-reports by 1
         # because of the header line itself).
         from agent_cli.render.tool_formatters import _READ_HEADER_RE  # noqa: PLC0415
+
         m = _READ_HEADER_RE.match(tr.content)
         if m:
             start, end, total = int(m[2]), int(m[3]), int(m[4])
@@ -369,10 +372,38 @@ def _attachment_size_hint(tc: ToolCall, tr: ToolResult) -> str:
         return ""
     if tc.name == "list_dir" and tr.content:
         from agent_cli.render.tool_formatters import _LIST_HEADER_RE  # noqa: PLC0415
+
         m = _LIST_HEADER_RE.search(tr.content)
         if m:
             return f"({m[2]} entries)"
     return ""
+
+
+def format_shell_run(
+    command: str,
+    exit_code: int,
+    output: str,
+) -> list[RenderableType]:
+    glyph_style = "success" if exit_code == 0 else "error"
+
+    call = Text()
+    call.append(f"{TOOL_DONE} ", style=glyph_style)
+    call.append("Run", style="bold")
+    call.append(f"({command})", style="muted")
+
+    body = Text()
+    body.append(f"{CONTINUATION}  ", style="muted")
+    if output.strip():
+        lines = output.splitlines() or [output]
+        body.append(lines[0], style="muted")
+        for extra in lines[1:]:
+            body.append("\n")
+            body.append("   " + extra, style="muted")
+    else:
+        body.append("(Completed with no output)", style="muted")
+
+    return [call, body]
+
 
 # Trigger formatter/expander registration via import side-effect.
 from agent_cli.render import tool_formatters as _tool_formatters  # noqa: F401, E402

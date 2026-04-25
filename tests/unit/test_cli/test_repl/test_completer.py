@@ -1,4 +1,5 @@
 """Tests for repl/completer.py."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,7 +14,6 @@ from agent_cli.repl.completer import (
     _RoutedCompleter,
     build_input_completer,
 )
-
 
 _FAKE_FILES = [
     "src/",
@@ -153,7 +153,8 @@ class TestAtFileCompleter:
         assert "tests/" in out
 
     def test_live_listing_supports_nested_directory_only_subtrees(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         (tmp_path / "root" / "a" / "deep").mkdir(parents=True)
         (tmp_path / "root" / "b").mkdir(parents=True)
@@ -171,7 +172,8 @@ class TestRouter:
 
     def test_slash_routes_to_slash_completer(self) -> None:
         with patch(
-            "agent_cli.repl.completer.list_project_files", return_value=_FAKE_FILES,
+            "agent_cli.repl.completer.list_project_files",
+            return_value=_FAKE_FILES,
         ):
             router = build_input_completer(self._registry())
 
@@ -181,20 +183,19 @@ class TestRouter:
 
     def test_at_routes_to_file_completer(self) -> None:
         with patch(
-            "agent_cli.repl.completer.list_project_files", return_value=_FAKE_FILES,
+            "agent_cli.repl.completer.list_project_files",
+            return_value=_FAKE_FILES,
         ):
             router = build_input_completer(self._registry())
 
-        out = [
-            comp.text
-            for comp in router.get_completions(_doc("@s"), CompleteEvent())
-        ]
+        out = [comp.text for comp in router.get_completions(_doc("@s"), CompleteEvent())]
 
         assert "src/" in out
 
     def test_plain_text_no_completions(self) -> None:
         with patch(
-            "agent_cli.repl.completer.list_project_files", return_value=_FAKE_FILES,
+            "agent_cli.repl.completer.list_project_files",
+            return_value=_FAKE_FILES,
         ):
             router = build_input_completer(self._registry())
 
@@ -214,3 +215,52 @@ class TestRoutedCompleterUnit:
         list(router.get_completions(_doc("/clear something"), CompleteEvent()))
 
         slash.get_completions.assert_not_called()
+
+    def test_shell_lane_yields_no_completions(self) -> None:
+        slash = MagicMock(spec=AtFileCompleter)
+        slash.get_completions = MagicMock(return_value=iter([]))
+        file_completer = MagicMock(spec=AtFileCompleter)
+        file_completer.get_completions = MagicMock(return_value=iter([]))
+        router = _RoutedCompleter(slash=slash, file=file_completer)
+
+        out = list(router.get_completions(_doc("!ls @src"), CompleteEvent()))
+
+        assert out == []
+        slash.get_completions.assert_not_called()
+        file_completer.get_completions.assert_not_called()
+
+    def test_invalidate_file_root_resets_at_completer(self, tmp_path: Path) -> None:
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+        (first / "alpha.py").touch()
+        (second / "beta.py").touch()
+
+        at_completer = AtFileCompleter(first)
+        router = _RoutedCompleter(slash=MagicMock(), file=at_completer)
+        # warm cache against `first`
+        _ = list(router.get_completions(_doc("@a"), CompleteEvent()))
+        assert at_completer._files is None or any("alpha" in f for f in (at_completer._files or []))
+
+        router.invalidate_file_root(second)
+
+        assert at_completer._root == second
+        assert at_completer._root_resolved == second.resolve()
+        assert at_completer._files is None
+
+
+class TestAtFileCompleterInvalidate:
+    def test_invalidate_resets_root_resolved_and_cache(self, tmp_path: Path) -> None:
+        a = tmp_path / "a"
+        b = tmp_path / "b"
+        a.mkdir()
+        b.mkdir()
+        c = AtFileCompleter(a)
+        c._files = ["stale.py"]
+
+        c.invalidate(b)
+
+        assert c._root == b
+        assert c._root_resolved == b.resolve()
+        assert c._files is None
