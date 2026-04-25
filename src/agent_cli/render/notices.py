@@ -11,5 +11,5 @@ def format_expired_notice(ids: list[int]) -> Text:
     t.append(f"{TOOL_DONE}  ", style="error")
     t.append("Pasted text ", style="muted")
     t.append(", ".join(f"#{i}" for i in ids), style="muted")
-    t.append(" unavailable (expired from this REPL session)", style="muted")
+    t.append(" unavailable", style="muted")
     return t

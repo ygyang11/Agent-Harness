@@ -188,6 +188,7 @@ async def run_repl(
                 # caught by the empty-check.
                 raw, expired = paste_store.expand(raw)
                 if expired:
+                    console.print()
                     await adapter.print_inline(format_expired_notice(expired))
                 # strip() only for the empty-check; pass raw to preserve
                 # indentation / multiline structure for pasted code blocks.
