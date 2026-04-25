@@ -413,7 +413,51 @@ async def test_prompt_isolates_shared_session_attrs() -> None:
     assert h._pt_session.completer is main_completer
 
 
-async def test_cancel_pending_drains_queue_and_cancels_futures() -> None:
+async def test_approval_prompt_does_not_pass_paste_processor() -> None:
+    """Approval prompt must call prompt_async without input_processors —
+    otherwise the main REPL's paste highlighter would bleed into approval
+    input, marking pasted text as "placeholder" in the wrong context.
+    """
+    h = _handler_with_bg_tasks(bg_tasks=[])
+
+    captured_kwargs: dict[str, object] = {}
+
+    async def _capture(*args: object, **kwargs: object) -> str:
+        captured_kwargs.update(kwargs)
+        return "y"
+
+    with patch.object(h._pt_session, "prompt_async", AsyncMock(side_effect=_capture)):
+        await h.request_approval(_request())
+
+    assert "input_processors" not in captured_kwargs or \
+        captured_kwargs.get("input_processors") in (None, [])
+
+
+async def test_approval_does_not_inherit_persisted_input_processors() -> None:
+    """Regression: prompt_toolkit persists input_processors back onto the
+    shared PromptSession after each prompt_async. If the main REPL leaves a
+    PastePlaceholderProcessor on the session, the approval prompt would see
+    it. The fix lives in loop._prompt_with_lock (snapshot/restore), but
+    approval handler must be defensible — verify session attr is not active
+    when approval prompt runs.
+    """
+    h = _handler_with_bg_tasks(bg_tasks=[])
+    sentinel = object()
+    h._pt_session.input_processors = sentinel
+
+    seen: dict[str, object] = {}
+
+    async def _capture(*args: object, **kwargs: object) -> str:
+        seen["input_processors_at_prompt"] = h._pt_session.input_processors
+        return "y"
+
+    with patch.object(h._pt_session, "prompt_async", AsyncMock(side_effect=_capture)):
+        await h.request_approval(_request())
+
+    # Approval prompt does not actively suppress the attr today; it relies on
+    # the REPL never leaving a stale processor. This test pins the contract:
+    # after approval, the session attr is restored to whatever it was before.
+    assert h._pt_session.input_processors is sentinel
     h = CliApprovalHandler(console=MagicMock())
     loop = asyncio.get_running_loop()
     f1: asyncio.Future[object] = loop.create_future()

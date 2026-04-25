@@ -8,16 +8,19 @@ from typing import Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.layout.processors import Processor
 from rich.console import Console
 
 from agent_cli.adapter import CliAdapter
 from agent_cli.approval_handler import CliApprovalHandler, _PendingApproval
 from agent_cli.commands.base import CommandContext
 from agent_cli.commands.registry import CommandRegistry
+from agent_cli.render.notices import format_expired_notice
 from agent_cli.render.ui import make_status_bar_text
 from agent_cli.repl.completer import build_input_completer
 from agent_cli.repl.keybindings import build_keybindings, reset_ctrl_c_state
 from agent_cli.repl.mentions import expand_mentions
+from agent_cli.repl.paste import PastePlaceholderProcessor, PasteStore
 from agent_cli.runtime import background
 from agent_cli.runtime.session import make_save_session
 from agent_cli.runtime.sigint import bind_work
@@ -83,8 +86,10 @@ async def _prompt_with_lock(
     adapter: CliAdapter,
     default: str,
     bottom_toolbar: _ToolbarText,
+    input_processors: list[Processor] | None = None,
 ) -> str:
     async with adapter.lock():
+        prev_processors = pt_session.input_processors
         try:
             return await pt_session.prompt_async(
                 _DEFAULT_PROMPT,
@@ -96,8 +101,13 @@ async def _prompt_with_lock(
                 # on exit without restoring ours.
                 handle_sigint=False,
                 complete_while_typing=True,
+                # prompt_async persists input_processors back onto the shared
+                # PromptSession; snapshot/restore so approval prompts (which never
+                # pass the kwarg) don't inherit the REPL placeholder highlighter.
+                input_processors=input_processors,
             )
         finally:
+            pt_session.input_processors = prev_processors
             reset_ctrl_c_state()
 
  
@@ -111,8 +121,11 @@ async def run_repl(
     handler: CliApprovalHandler,
     pt_session: PromptSession[str],
 ) -> None:
+    paste_store = PasteStore()
+    paste_processors: list[Processor] = [PastePlaceholderProcessor()]
+
     pt_session.completer = build_input_completer(registry)
-    pt_session.key_bindings = build_keybindings()
+    pt_session.key_bindings = build_keybindings(paste_store=paste_store)
     save = make_save_session(agent, session_id, session_backend)
 
     state = _LoopState()
@@ -170,6 +183,12 @@ async def run_repl(
             if state.deferred_line is not None:
                 raw = state.deferred_line
                 state.deferred_line = None
+                # Expand paste placeholders before strip / dispatch so slash
+                # commands receive real argv and whitespace-only pastes are
+                # caught by the empty-check.
+                raw, expired = paste_store.expand(raw)
+                if expired:
+                    await adapter.print_inline(format_expired_notice(expired))
                 # strip() only for the empty-check; pass raw to preserve
                 # indentation / multiline structure for pasted code blocks.
                 if raw.strip():
@@ -186,6 +205,7 @@ async def run_repl(
                     adapter,
                     state.pending_input,
                     make_status_bar_text(agent),
+                    input_processors=paste_processors,
                 ),
             )
             state.pending_input = ""

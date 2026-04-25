@@ -1,10 +1,15 @@
-"""Main REPL key bindings: Ctrl+C (single/double), Ctrl+D, Alt+Enter."""
+"""Main REPL key bindings: Ctrl+C (single/double), Ctrl+D, Alt+Enter,
+BracketedPaste, Backspace."""
 from __future__ import annotations
 
 import time
 
+from prompt_toolkit.filters import has_selection
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
+from prompt_toolkit.keys import Keys
+
+from agent_cli.repl.paste import PasteStore, trailing_placeholder_length
 
 _CTRL_C_DOUBLE_WINDOW_S = 2.0
 
@@ -19,8 +24,34 @@ def reset_ctrl_c_state() -> None:
     _ctrl_c_state[0] = 0.0
 
 
-def build_keybindings() -> KeyBindings:
+def build_keybindings(*, paste_store: PasteStore) -> KeyBindings:
     kb = KeyBindings()
+
+    @kb.add(Keys.BracketedPaste)
+    def _(event: KeyPressEvent) -> None:
+        # Preserve prompt_toolkit default \r\n/\r → \n normalization before
+        # register, so threshold check and stored content use unified \n.
+        data = event.data or ""
+        if not data:
+            return
+        data = data.replace("\r\n", "\n").replace("\r", "\n")
+        placeholder = paste_store.register(data)
+        event.current_buffer.insert_text(placeholder if placeholder else data)
+
+    def _backspace_atomic_placeholder(event: KeyPressEvent) -> None:
+        # Filter excludes selection; default has_selection binding still runs.
+        # Store entry is intentionally NOT freed — buffer delete is a pure UI
+        # op; keeping the entry preserves undo / cross-turn recall semantics.
+        buf = event.current_buffer
+        n = trailing_placeholder_length(buf.document.text_before_cursor)
+        if n is not None:
+            buf.delete_before_cursor(count=n)
+            return
+        buf.delete_before_cursor(count=1)
+
+    kb.add(Keys.Backspace, filter=~has_selection)(_backspace_atomic_placeholder)
+    kb.add("c-h", filter=~has_selection)(_backspace_atomic_placeholder)
+
 
     @kb.add("tab")
     def _(event: KeyPressEvent) -> None:

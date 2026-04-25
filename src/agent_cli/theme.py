@@ -73,6 +73,7 @@ def _build_theme(name: str, p: Palette) -> CliTheme:
             "scrollbar.button":                        f"bg:{p.muted}",
             "bottom-toolbar":                          f"noreverse fg:{p.secondary}",
             "bottom-toolbar.text":                     f"noreverse fg:{p.secondary} bold italic",
+            "paste-placeholder":                       f"fg:{p.primary} bold",
         }),
     )
 
@@ -102,7 +103,7 @@ TOKYO_NIGHT = _build_theme("tokyo-night", Palette(
     text="#C0CAF5",
     muted="#565F89",
     primary="#7AA2F7",
-    secondary="#BB9AF7",
+    secondary="#706CEB",
     accent="#E0AF68",
     success="#9ECE6A",
     error="#F7768E",
