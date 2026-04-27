@@ -4,9 +4,24 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar, Token
+from typing import Any
 
 from agent_harness.agent.base import BaseAgent
 from agent_harness.core.message import Message, ToolCall, ToolResult
+
+
+_pending_writes: ContextVar[list[asyncio.Future[Any]] | None] = ContextVar(
+    "_pending_writes", default=None,
+)
+
+
+def use_pending_tracker(tracker: list[asyncio.Future[Any]] | None) -> Token[Any]:
+    return _pending_writes.set(tracker)
+
+
+def reset_pending_tracker(token: Token[Any]) -> None:
+    _pending_writes.reset(token)
 
 
 async def append_tool_turn(
@@ -21,6 +36,10 @@ async def append_tool_turn(
     ``asyncio.shield``-ed: once started, completes even if the outer
     task is cancelled (so no orphan tool_calls survive). Cancel before
     the write phase leaves only the user message — also schema-valid.
+
+    The inner write Task is registered into the current pending_writes
+    tracker (if bound by the CLI _run via use_pending_tracker) so cancel-
+    rollback can drain it before deciding commit state.
     """
     if not pairs:
         return
@@ -28,7 +47,12 @@ async def append_tool_turn(
     if render is not None:
         await render(pairs)
 
-    await asyncio.shield(_write(agent, pairs))
+    write_task = asyncio.ensure_future(_write(agent, pairs))
+    tracker = _pending_writes.get()
+    if tracker is not None:
+        tracker.append(write_task)
+
+    await asyncio.shield(write_task)
 
 
 def refresh_system_prompt(agent: BaseAgent) -> None:

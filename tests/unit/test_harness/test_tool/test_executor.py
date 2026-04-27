@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 import pytest
 
 from agent_harness.core.config import HarnessConfig, ToolConfig
 from agent_harness.core.message import ToolCall
+from agent_harness.core.errors import ToolError
 from agent_harness.tool.base import BaseTool, ToolSchema
 from agent_harness.tool.executor import ToolExecutor
 from agent_harness.tool.registry import ToolRegistry
@@ -35,6 +37,16 @@ class _FailingTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> str:
         raise RuntimeError("tool exploded")
+
+
+class _ToolErrorTool(BaseTool):
+    """Tool that raises a structured ToolError."""
+
+    def __init__(self) -> None:
+        super().__init__(name="tool_error_tool", description="Raises ToolError")
+
+    async def execute(self, **kwargs: Any) -> str:
+        raise ToolError("structured failure")
 
 
 def _make_executor(*tools: BaseTool, config: ToolConfig | None = None) -> ToolExecutor:
@@ -96,6 +108,49 @@ class TestToolExecutorErrors:
         assert result.is_error is True
         assert "tool exploded" in result.content.lower() or "error" in result.content.lower()
 
+    @pytest.mark.asyncio
+    async def test_tool_error_logs_at_debug_only(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        executor = _make_executor(_ToolErrorTool())
+        tc = ToolCall(name="tool_error_tool", arguments={})
+
+        target = logging.getLogger("agent_harness.tool.executor")
+        target.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.DEBUG, logger="agent_harness.tool.executor"):
+                result = await executor.execute(tc)
+        finally:
+            target.removeHandler(caplog.handler)
+
+        assert result.is_error is True
+        assert any(
+            r.levelno == logging.DEBUG and "structured failure" in r.message
+            for r in caplog.records
+        )
+        assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_logs_traceback_at_debug_only(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        executor = _make_executor(_FailingTool())
+        tc = ToolCall(name="fail_tool", arguments={})
+
+        target = logging.getLogger("agent_harness.tool.executor")
+        target.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.DEBUG, logger="agent_harness.tool.executor"):
+                result = await executor.execute(tc)
+        finally:
+            target.removeHandler(caplog.handler)
+
+        assert result.is_error is True
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("unexpected error" in r.message for r in debug_records)
+        assert any(r.exc_info is not None for r in debug_records)
+        assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+
 
 class TestToolExecutorTimeout:
     @pytest.mark.asyncio
@@ -116,6 +171,29 @@ class TestToolExecutorTimeout:
         result = await executor.execute(tc)
         assert result.is_error is True
         assert "timed out" in result.content.lower()
+
+    @pytest.mark.asyncio
+    async def test_timeout_logs_at_debug_only(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        slow = _SlowTool(delay=10.0)
+        executor = _make_executor(slow)
+        tc = ToolCall(name="slow_tool", arguments={})
+
+        target = logging.getLogger("agent_harness.tool.executor")
+        target.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.DEBUG, logger="agent_harness.tool.executor"):
+                result = await executor.execute(tc, timeout=0.1)
+        finally:
+            target.removeHandler(caplog.handler)
+
+        assert result.is_error is True
+        assert any(
+            r.levelno == logging.DEBUG and "timed out" in r.message
+            for r in caplog.records
+        )
+        assert not any(r.levelno >= logging.WARNING for r in caplog.records)
 
 
 class TestToolExecutorBatch:

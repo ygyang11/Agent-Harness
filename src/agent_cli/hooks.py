@@ -8,12 +8,14 @@ from rich.markup import escape as rich_escape
 
 from agent_cli.adapter import CliAdapter
 from agent_cli.approval_handler import CliApprovalHandler
+from agent_cli.runtime.session import _TurnContext
 from agent_cli.theme import COMPRESSION, SUBAGENT, SUBAGENT_DONE
 from agent_harness.approval.types import ApprovalRequest, ApprovalResult
 from agent_harness.core.message import ToolCall
 from agent_harness.hooks.base import DefaultHooks
 from agent_harness.hooks.progress import _subagent_active
 from agent_harness.llm.types import LLMRetryInfo, StreamDelta
+from agent_harness.utils.logging_config import setup_logging
 
 _debug_enabled: list[bool] = [False]
 
@@ -24,6 +26,7 @@ def is_debug_enabled() -> bool:
 
 def toggle_debug() -> bool:
     _debug_enabled[0] = not _debug_enabled[0]
+    setup_logging("DEBUG" if _debug_enabled[0] else "WARNING")
     return _debug_enabled[0]
 
 
@@ -36,6 +39,17 @@ class CliHooks(DefaultHooks):
         self.adapter = adapter
         self._approval_handler = approval_handler
         self._active_fg_subagents: set[str] = set()
+        self._turn: _TurnContext | None = None
+
+    def begin_turn(self, ctx: _TurnContext) -> None:
+        self._turn = ctx
+
+    def end_turn(self) -> None:
+        self._turn = None
+
+    @property
+    def turn(self) -> _TurnContext | None:
+        return self._turn
 
     async def on_run_start(self, agent_name: str, input_text: str) -> None:
         pass
@@ -59,6 +73,8 @@ class CliHooks(DefaultHooks):
         if _subagent_active.get(False):
             return
         if delta.chunk.delta_content:
+            if self._turn is not None:
+                self._turn.committed = True
             await self.adapter.on_stream_delta(delta.chunk.delta_content)
 
     async def on_llm_retry(self, agent_name: str, info: LLMRetryInfo) -> None:
@@ -71,6 +87,8 @@ class CliHooks(DefaultHooks):
             if not self._is_background():
                 self.adapter.tick_subagent_tool()
             return
+        if self._turn is not None:
+            self._turn.committed = True
         await self.adapter.on_tool_call(tool_call)
 
     async def on_tool_result(self, agent_name: str, result: Any) -> None:
@@ -106,9 +124,14 @@ class CliHooks(DefaultHooks):
     ) -> None:
         # pause_for_stdin is handled atomically inside
         # CliApprovalHandler._prompt_user under the shared _console_lock,
-        # so the hook stays as a no-op (pause + panel + prompt must be in
+        # so the hook stays IO-free (pause + panel + prompt must be in
         # the same critical section to avoid terminal ownership race).
-        return
+        if _subagent_active.get(False):
+            return
+        if self._is_background():
+            return
+        if self._turn is not None:
+            self._turn.committed = True
 
     async def on_approval_result(
         self, agent_name: str, result: ApprovalResult
@@ -119,6 +142,8 @@ class CliHooks(DefaultHooks):
             return
         from agent_harness.approval.types import ApprovalDecision
         if result.decision == ApprovalDecision.DENY:
+            if self._turn is not None:
+                self._turn.committed = True
             await self.adapter.on_tool_denied(result)
 
     def _is_background(self) -> bool:
@@ -130,6 +155,8 @@ class CliHooks(DefaultHooks):
     async def on_compression_start(self, agent_name: str) -> None:
         if _subagent_active.get(False):
             return
+        if self._turn is not None:
+            self._turn.committed = True
         await self.adapter.print_inline(
             f"[info]{COMPRESSION} Compressing context...[/info]"
         )

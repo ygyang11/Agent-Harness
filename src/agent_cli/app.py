@@ -85,6 +85,7 @@ async def _async_main() -> int:
         console.print(
             f"[dim]config created at [bold]{config_result.path}[/bold] — edit to customize[/dim]\n"
         )
+        console.print()
 
     # Take over SIGINT from asyncio.run's default handler. Between-turn
     # idle absorbs Ctrl+C silently; per-turn task-bound handlers (via
@@ -104,6 +105,7 @@ async def _async_main() -> int:
             approval_handler,
             pt_session,
             shell_state,
+            hooks,
         )
     finally:
         shell_state.cleanup()

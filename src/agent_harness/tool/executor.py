@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import traceback
 from collections.abc import AsyncIterator
 
 from agent_harness.core.config import HarnessConfig, ToolConfig, resolve_tool_config
@@ -96,7 +95,7 @@ class ToolExecutor(EventEmitter):
 
         except asyncio.TimeoutError:
             error_msg = f"Tool '{tool_call.name}' timed out after {effective_timeout}s"
-            logger.warning(error_msg)
+            logger.debug(error_msg)
             await self.emit(
                 "tool.execute.error",
                 tool_name=tool_call.name,
@@ -111,7 +110,7 @@ class ToolExecutor(EventEmitter):
 
         except ToolError as e:
             error_msg = f"Tool '{tool_call.name}' error: {e}"
-            logger.warning(error_msg)
+            logger.debug(error_msg)
             await self.emit(
                 "tool.execute.error",
                 tool_name=tool_call.name,
@@ -125,8 +124,12 @@ class ToolExecutor(EventEmitter):
             )
 
         except Exception as e:
-            error_msg = f"Tool '{tool_call.name}' unexpected error: {e}\n{traceback.format_exc()}"
-            logger.error(error_msg)
+            logger.debug(
+                "Tool '%s' unexpected error: %s",
+                tool_call.name,
+                e,
+                exc_info=e,
+            )
             await self.emit(
                 "tool.execute.error",
                 tool_name=tool_call.name,

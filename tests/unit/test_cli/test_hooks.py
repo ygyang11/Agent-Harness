@@ -372,3 +372,203 @@ async def test_on_llm_retry_dispatched_for_main_agent() -> None:
     await hooks.on_llm_retry("main", info)
 
     a.on_retry.assert_awaited_once_with(info)
+
+
+# ── Turn lifecycle + commit flag flips ──
+
+
+from agent_harness.approval.types import ApprovalDecision
+from agent_harness.core.message import Message
+
+from agent_cli.runtime.session import _TurnContext
+
+
+def _empty_turn() -> _TurnContext:
+    a = Message.system("sys")
+    return _TurnContext(
+        snapshot_messages=[a.model_copy(deep=True)],
+        snapshot_compressor_state=None,
+        snapshot_ids=frozenset({id(a)}),
+        main_system_id=id(a),
+    )
+
+
+def test_begin_end_turn_lifecycle() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+    assert hooks.turn is None
+
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+    assert hooks.turn is ctx
+
+    hooks.end_turn()
+    assert hooks.turn is None
+
+
+def test_end_turn_idempotent() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+    hooks.end_turn()
+    hooks.end_turn()
+    assert hooks.turn is None
+
+
+async def test_compression_start_flips_commit_when_turn_bound() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+
+    await hooks.on_compression_start("main")
+
+    assert ctx.committed is True
+    a.print_inline.assert_awaited_once()
+
+
+async def test_compression_start_no_turn_does_not_raise() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+
+    await hooks.on_compression_start("main")
+
+    a.print_inline.assert_awaited_once()
+
+
+async def test_stream_delta_with_content_flips_commit() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+    delta = MagicMock()
+    delta.chunk.delta_content = "hello"
+
+    await hooks.on_llm_stream_delta("main", delta)
+
+    assert ctx.committed is True
+    a.on_stream_delta.assert_awaited_once_with("hello")
+
+
+async def test_stream_delta_without_content_does_not_flip() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+    delta = MagicMock()
+    delta.chunk.delta_content = ""
+
+    await hooks.on_llm_stream_delta("main", delta)
+
+    assert ctx.committed is False
+    a.on_stream_delta.assert_not_awaited()
+
+
+async def test_tool_call_flips_commit() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+    tc = MagicMock()
+
+    await hooks.on_tool_call("main", tc)
+
+    assert ctx.committed is True
+    a.on_tool_call.assert_awaited_once_with(tc)
+
+
+async def test_tool_call_in_subagent_does_not_flip_top_level_commit() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+    tc = MagicMock()
+    token = _subagent_active.set(True)
+    try:
+        await hooks.on_tool_call("subagent", tc)
+    finally:
+        _subagent_active.reset(token)
+
+    assert ctx.committed is False
+    a.on_tool_call.assert_not_awaited()
+
+
+async def test_approval_request_flips_commit() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+
+    await hooks.on_approval_request("main", MagicMock())
+
+    assert ctx.committed is True
+    a.pause_for_stdin.assert_not_called()
+
+
+async def test_approval_request_in_subagent_does_not_flip() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+    token = _subagent_active.set(True)
+    try:
+        await hooks.on_approval_request("sub", MagicMock())
+    finally:
+        _subagent_active.reset(token)
+
+    assert ctx.committed is False
+
+
+async def test_approval_request_in_background_does_not_flip() -> None:
+    a = _mock_adapter()
+    handler = MagicMock()
+    handler.is_in_background_task = MagicMock(return_value=True)
+    hooks = CliHooks(a, approval_handler=handler)
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+
+    await hooks.on_approval_request("main", MagicMock())
+
+    assert ctx.committed is False
+
+
+async def test_approval_result_deny_flips_and_calls_on_tool_denied() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+    result = MagicMock(decision=ApprovalDecision.DENY)
+
+    await hooks.on_approval_result("main", result)
+
+    assert ctx.committed is True
+    a.on_tool_denied.assert_awaited_once_with(result)
+
+
+async def test_approval_result_allow_does_not_flip() -> None:
+    a = _mock_adapter()
+    hooks = CliHooks(a)
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+    result = MagicMock(decision=ApprovalDecision.ALLOW_ONCE)
+
+    await hooks.on_approval_result("main", result)
+
+    assert ctx.committed is False
+    a.on_tool_denied.assert_not_awaited()
+
+
+async def test_flag_flips_before_adapter_call() -> None:
+    a = _mock_adapter()
+    seen_committed: list[bool] = []
+
+    async def capture(*args: object, **kwargs: object) -> None:
+        seen_committed.append(ctx.committed)
+
+    a.on_tool_call = AsyncMock(side_effect=capture)
+    hooks = CliHooks(a)
+    ctx = _empty_turn()
+    hooks.begin_turn(ctx)
+
+    await hooks.on_tool_call("main", MagicMock())
+
+    assert seen_committed == [True]

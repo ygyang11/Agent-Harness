@@ -119,28 +119,46 @@ async def test_cancel_loser_cancels_pending_task_and_awaits() -> None:
 # ---- race (via _run) ------------------------------------------------------
 
 
-async def test_run_cancelled_error_resets_state_and_ends_step() -> None:
+def _run_extras() -> tuple[MagicMock, MagicMock, AsyncMock]:
+    """Build the (cli_hooks, session_backend, save) trio for _run tests."""
+    cli_hooks = MagicMock()
+    cli_hooks.begin_turn = MagicMock()
+    cli_hooks.end_turn = MagicMock()
+    return cli_hooks, MagicMock(), AsyncMock()
+
+
+def _agent_with_stm(messages: list | None = None) -> MagicMock:
     agent = MagicMock()
+    agent.context.short_term_memory._messages = messages or []
+    agent.context.short_term_memory.compressor = None
+    agent.system_prompt = ""
+    return agent
+
+
+async def test_run_cancelled_error_resets_state_and_ends_step() -> None:
+    agent = _agent_with_stm()
     agent.context.state.reset = MagicMock()
     agent.run = AsyncMock(side_effect=asyncio.CancelledError())
     adapter = MagicMock()
     adapter.end_step = AsyncMock()
+    adapter.begin_run = MagicMock()
     console = MagicMock()
 
-    await _run(agent, "text", "session-1", console, adapter)
+    await _run(agent, "text", "session-1", console, adapter, *_run_extras())
 
     agent.context.state.reset.assert_called_once()
     adapter.end_step.assert_awaited_once()
 
 
 async def test_run_swallows_generic_exception_to_keep_repl_alive() -> None:
-    agent = MagicMock()
+    agent = _agent_with_stm()
     agent.run = AsyncMock(side_effect=RuntimeError("boom"))
     adapter = MagicMock()
     adapter.end_step = AsyncMock()
+    adapter.begin_run = MagicMock()
     console = MagicMock()
 
-    await _run(agent, "text", "session-1", console, adapter)
+    await _run(agent, "text", "session-1", console, adapter, *_run_extras())
 
     adapter.end_step.assert_awaited_once()
     # hooks.on_error owns error rendering now — _run must not print.
@@ -148,12 +166,13 @@ async def test_run_swallows_generic_exception_to_keep_repl_alive() -> None:
 
 
 async def test_run_ends_step_on_success() -> None:
-    agent = MagicMock()
+    agent = _agent_with_stm()
     agent.run = AsyncMock(return_value=None)
     adapter = MagicMock()
     adapter.end_step = AsyncMock()
+    adapter.begin_run = MagicMock()
 
-    await _run(agent, "text", "session-1", MagicMock(), adapter)
+    await _run(agent, "text", "session-1", MagicMock(), adapter, *_run_extras())
 
     agent.run.assert_awaited_once()
     adapter.end_step.assert_awaited_once()
@@ -182,6 +201,8 @@ async def test_handle_line_cancelled_keeps_repl_alive() -> None:
         MagicMock(),
         ShellState(),
         pt_session,
+        MagicMock(),
+        MagicMock(),
     )
 
     assert should_exit is False
@@ -223,6 +244,8 @@ async def test_handle_line_shell_lane_dispatches_to_exec_shell(
         MagicMock(),
         ShellState(),
         pt_session,
+        MagicMock(),
+        MagicMock(),
     )
 
     assert should_exit is False
@@ -251,6 +274,8 @@ async def test_handle_line_bare_bang_is_noop() -> None:
         MagicMock(),
         ShellState(),
         pt_session,
+        MagicMock(),
+        MagicMock(),
     )
 
     assert should_exit is False
@@ -285,6 +310,8 @@ async def test_handle_line_shell_cancellation_renders_message(
         MagicMock(),
         ShellState(),
         pt_session,
+        MagicMock(),
+        MagicMock(),
     )
 
     assert any(
@@ -352,6 +379,9 @@ def _make_run_repl_mocks(prompt_results: list[object]):
 async def _drive_run_repl(mocks: dict[str, object]) -> None:
     from agent_cli.runtime.shell import ShellState
 
+    cli_hooks = MagicMock()
+    cli_hooks.begin_turn = MagicMock()
+    cli_hooks.end_turn = MagicMock()
     await run_repl(
         mocks["agent"],
         mocks["console"],
@@ -362,6 +392,7 @@ async def _drive_run_repl(mocks: dict[str, object]) -> None:
         mocks["handler"],
         mocks["pt_session"],
         ShellState(),
+        cli_hooks,
     )
 
 
@@ -520,3 +551,176 @@ async def test_prompt_with_lock_restores_input_processors() -> None:
     )
 
     assert pt_session.input_processors is sentinel
+
+
+# ---- _run cancel-rollback (Phase 4) ---------------------------------------
+
+
+from agent_cli.hooks import CliHooks
+from agent_cli.runtime.session import _TurnContext
+from agent_harness.core.message import Message, Role
+
+
+def _make_real_cli_hooks() -> CliHooks:
+    a = MagicMock()
+    a.on_stream_delta = AsyncMock()
+    a.on_tool_call = AsyncMock()
+    a.on_tool_denied = AsyncMock()
+    a.on_llm_call = AsyncMock()
+    a.end_step = AsyncMock()
+    a.print_inline = AsyncMock()
+    a.start_subagent = AsyncMock()
+    a.stop_subagent = AsyncMock()
+    a.tick_subagent_step = MagicMock()
+    a.tick_subagent_tool = MagicMock()
+    return CliHooks(a)
+
+
+def _real_agent_with_messages(initial: list[Message]) -> MagicMock:
+    agent = MagicMock()
+    agent.system_prompt = ""
+    agent._total_usage = MagicMock()
+    stm = MagicMock()
+    stm._messages = list(initial)
+    stm.compressor = None
+    agent.context.short_term_memory = stm
+    agent.context.state.reset = MagicMock()
+    return agent
+
+
+async def test_run_passes_session_backend_instance_not_string() -> None:
+    initial = [Message.user("hi")]
+    agent = _real_agent_with_messages(initial)
+    captured: dict[str, object] = {}
+
+    async def fake_run(text: object, session: object = None, **_: object) -> None:
+        captured["session"] = session
+
+    agent.run = fake_run
+    adapter = MagicMock()
+    adapter.begin_run = MagicMock()
+    adapter.end_step = AsyncMock()
+    backend = MagicMock()
+    cli_hooks = _make_real_cli_hooks()
+
+    await _run(
+        agent, "go", "sid", MagicMock(), adapter,
+        cli_hooks, backend, AsyncMock(),
+    )
+
+    assert captured["session"] is backend
+
+
+async def test_run_pre_commit_cancel_rolls_back_messages_and_calls_save() -> None:
+    initial = [Message.user("u1")]
+    agent = _real_agent_with_messages(initial)
+
+    async def fake_run(text: object, session: object = None, **_: object) -> None:
+        agent.context.short_term_memory._messages.append(Message.user("text"))
+        raise asyncio.CancelledError()
+
+    agent.run = fake_run
+    adapter = MagicMock()
+    adapter.begin_run = MagicMock()
+    adapter.end_step = AsyncMock()
+    save = AsyncMock()
+    cli_hooks = _make_real_cli_hooks()
+
+    await _run(
+        agent, "text", "sid", MagicMock(), adapter,
+        cli_hooks, MagicMock(), save,
+    )
+
+    msgs = agent.context.short_term_memory._messages
+    assert len(msgs) == 1
+    assert msgs[0].content == "u1"
+    save.assert_awaited_once()
+
+
+async def test_run_post_commit_cancel_does_not_rollback() -> None:
+    initial = [Message.user("u1")]
+    agent = _real_agent_with_messages(initial)
+    cli_hooks = _make_real_cli_hooks()
+
+    async def fake_run(text: object, session: object = None, **_: object) -> None:
+        if cli_hooks.turn is not None:
+            cli_hooks.turn.committed = True
+        agent.context.short_term_memory._messages.append(Message.assistant("partial"))
+        raise asyncio.CancelledError()
+
+    agent.run = fake_run
+    adapter = MagicMock()
+    adapter.begin_run = MagicMock()
+    adapter.end_step = AsyncMock()
+    save = AsyncMock()
+
+    await _run(
+        agent, "text", "sid", MagicMock(), adapter,
+        cli_hooks, MagicMock(), save,
+    )
+
+    msgs = agent.context.short_term_memory._messages
+    assert len(msgs) == 2
+    save.assert_not_awaited()
+
+
+async def test_run_preserves_bg_message_during_rollback() -> None:
+    initial = [Message.user("u1")]
+    agent = _real_agent_with_messages(initial)
+
+    async def fake_run(text: object, session: object = None, **_: object) -> None:
+        bg = Message.system("[bg done]", metadata={"is_background_result": True})
+        agent.context.short_term_memory._messages.append(Message.user("text"))
+        agent.context.short_term_memory._messages.append(bg)
+        raise asyncio.CancelledError()
+
+    agent.run = fake_run
+    adapter = MagicMock()
+    adapter.begin_run = MagicMock()
+    adapter.end_step = AsyncMock()
+    save = AsyncMock()
+    cli_hooks = _make_real_cli_hooks()
+
+    await _run(
+        agent, "text", "sid", MagicMock(), adapter,
+        cli_hooks, MagicMock(), save,
+    )
+
+    msgs = agent.context.short_term_memory._messages
+    assert len(msgs) == 2
+    assert msgs[0].content == "u1"
+    assert msgs[1].metadata.get("is_background_result") is True
+
+
+async def test_run_end_turn_called_in_finally_after_normal_completion() -> None:
+    initial: list[Message] = []
+    agent = _real_agent_with_messages(initial)
+    agent.run = AsyncMock(return_value=None)
+    adapter = MagicMock()
+    adapter.begin_run = MagicMock()
+    adapter.end_step = AsyncMock()
+    cli_hooks = _make_real_cli_hooks()
+
+    await _run(
+        agent, "text", "sid", MagicMock(), adapter,
+        cli_hooks, MagicMock(), AsyncMock(),
+    )
+
+    assert cli_hooks.turn is None
+
+
+async def test_run_end_turn_called_in_finally_after_cancel() -> None:
+    initial: list[Message] = []
+    agent = _real_agent_with_messages(initial)
+    agent.run = AsyncMock(side_effect=asyncio.CancelledError())
+    adapter = MagicMock()
+    adapter.begin_run = MagicMock()
+    adapter.end_step = AsyncMock()
+    cli_hooks = _make_real_cli_hooks()
+
+    await _run(
+        agent, "text", "sid", MagicMock(), adapter,
+        cli_hooks, MagicMock(), AsyncMock(),
+    )
+
+    assert cli_hooks.turn is None

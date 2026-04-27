@@ -32,10 +32,7 @@ def render_welcome(
     cwd: str,
     config_source: str,
 ) -> None:
-    """Print the welcome block — banner, tagline, meta rows, command hint.
-
-    Layout strictly follows ``/tmp/harness-preview/index.html#welcome``.
-    """
+    """Print the welcome block — banner, tagline, meta rows, command hint."""
     console.print()
 
     for line in _BANNER_LINES:

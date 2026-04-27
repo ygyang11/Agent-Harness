@@ -1,14 +1,19 @@
 """Runtime-layer wrappers around session state mutation."""
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from agent_harness.agent.base import BaseAgent
-from agent_harness.core.message import Message
+from agent_harness.core.message import Message, Role
 from agent_harness.llm import BaseLLM
 from agent_harness.session.base import BaseSession
+
+logger = logging.getLogger(__name__)
 
 SaveSession = Callable[[], Awaitable[None]]
 
@@ -68,3 +73,89 @@ def make_save_session(
         await backend.save_state(ss)
 
     return _save
+
+
+# ── Turn lifecycle (cancel-rollback) ──
+
+
+@dataclass
+class _TurnContext:
+    snapshot_messages: list[Message]
+    snapshot_compressor_state: tuple[int, list[str]] | None
+    snapshot_ids: frozenset[int]
+    main_system_id: int | None
+    pending_mention_writes: list[asyncio.Future[Any]] = field(default_factory=list)
+    committed: bool = False
+
+
+def take_snapshot(agent: BaseAgent) -> _TurnContext:
+    originals = get_messages(agent)
+
+    main_system_id: int | None = None
+    if agent.system_prompt:
+        for m in originals:
+            if m.role == Role.SYSTEM and m.content == agent.system_prompt:
+                main_system_id = id(m)
+                break
+
+    compressor_state: tuple[int, list[str]] | None = None
+    compressor = agent.context.short_term_memory.compressor
+    if compressor is not None:
+        compressor_state = (
+            compressor._compression_count,
+            list(compressor._archive_paths),
+        )
+
+    return _TurnContext(
+        snapshot_messages=[m.model_copy(deep=True) for m in originals],
+        snapshot_compressor_state=compressor_state,
+        snapshot_ids=frozenset(id(m) for m in originals),
+        main_system_id=main_system_id,
+    )
+
+
+def transcript_changed(ctx: _TurnContext, current: list[Message]) -> bool:
+    relevant = ctx.snapshot_ids
+    if ctx.main_system_id is not None:
+        relevant = relevant - {ctx.main_system_id}
+    current_ids = {id(m) for m in current}
+    return not relevant.issubset(current_ids)
+
+
+async def drain_pending_writes(ctx: _TurnContext) -> None:
+    if not ctx.pending_mention_writes:
+        return
+    pending = list(ctx.pending_mention_writes)
+    ctx.pending_mention_writes.clear()
+    await asyncio.gather(*pending, return_exceptions=True)
+
+
+def should_rollback(ctx: _TurnContext, current: list[Message]) -> bool:
+    if ctx.committed:
+        return False
+    return not transcript_changed(ctx, current)
+
+
+async def rollback(
+    agent: BaseAgent,
+    ctx: _TurnContext,
+    save: SaveSession,
+) -> None:
+    bg_added = [
+        m for m in get_messages(agent)
+        if id(m) not in ctx.snapshot_ids
+        and m.metadata.get("is_background_result")
+    ]
+    set_messages(agent, list(ctx.snapshot_messages) + bg_added)
+
+    compressor = agent.context.short_term_memory.compressor
+    if ctx.snapshot_compressor_state is not None and compressor is not None:
+        count, archives = ctx.snapshot_compressor_state
+        compressor._compression_count = count
+        compressor._archive_paths = list(archives)
+        compressor._last_result = None
+
+    try:
+        await save()
+    except Exception as e:
+        logger.debug("rollback: save() failed; disk left in pre-rollback state: %s", e)

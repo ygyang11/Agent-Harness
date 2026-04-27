@@ -16,6 +16,7 @@ from agent_cli.adapter import CliAdapter
 from agent_cli.approval_handler import CliApprovalHandler, _PendingApproval
 from agent_cli.commands.base import CommandContext
 from agent_cli.commands.registry import CommandRegistry
+from agent_cli.hooks import CliHooks
 from agent_cli.render.notices import format_expired_notice
 from agent_cli.render.ui import make_status_bar_text
 from agent_cli.repl.completer import build_input_completer
@@ -23,7 +24,9 @@ from agent_cli.repl.keybindings import build_keybindings, reset_ctrl_c_state
 from agent_cli.repl.mentions import expand_mentions
 from agent_cli.repl.paste import PastePlaceholderProcessor, PasteStore
 from agent_cli.runtime import background
-from agent_cli.runtime.session import make_save_session
+from agent_cli.runtime.conversation import reset_pending_tracker, use_pending_tracker
+from agent_cli.runtime.session import SaveSession, get_messages, make_save_session
+from agent_cli.runtime.session import drain_pending_writes, rollback, should_rollback, take_snapshot
 from agent_cli.runtime.shell import ShellState
 from agent_cli.runtime.sigint import bind_work
 from agent_cli.theme import APPROVAL, COMPRESSION, PROMPT
@@ -123,6 +126,7 @@ async def run_repl(
     handler: CliApprovalHandler,
     pt_session: PromptSession[str],
     shell_state: ShellState,
+    cli_hooks: CliHooks,
 ) -> None:
     paste_store = PasteStore()
     paste_processors: list[Processor] = [PastePlaceholderProcessor()]
@@ -179,6 +183,9 @@ async def run_repl(
                     session_id,
                     console,
                     adapter,
+                    cli_hooks,
+                    session_backend,
+                    save,
                 )
                 continue
 
@@ -198,7 +205,7 @@ async def run_repl(
                 if raw.strip():
                     if await _handle_line(
                         raw, agent, console, registry, session_id, save, adapter, handler,
-                        shell_state, pt_session
+                        shell_state, pt_session, cli_hooks, session_backend,
                     ):
                         break
                 continue
@@ -269,6 +276,8 @@ async def _handle_line(
     handler: CliApprovalHandler,
     shell_state: ShellState,
     pt_session: PromptSession[str],
+    cli_hooks: CliHooks,
+    session_backend: BaseSession,
 ) -> bool:
     console.print()
 
@@ -321,10 +330,16 @@ async def _handle_line(
         if result.should_exit:
             return True
         if result.agent_input:
-            await _run(agent, result.agent_input, session_id, console, adapter)
+            await _run(
+                agent, result.agent_input, session_id, console, adapter,
+                cli_hooks, session_backend, save,
+            )
         return False
 
-    await _run(agent, line, session_id, console, adapter)
+    await _run(
+        agent, line, session_id, console, adapter,
+        cli_hooks, session_backend, save,
+    )
     return False
 
 
@@ -334,6 +349,9 @@ async def _run(
     session_id: str,
     console: Console,
     adapter: CliAdapter,
+    cli_hooks: CliHooks,
+    session_backend: BaseSession,
+    save: SaveSession,
 ) -> None:
     cancelled = False
     adapter.begin_run()
@@ -346,8 +364,12 @@ async def _run(
                 return
             await expand_mentions(a, adapter, t)
 
+    turn_ctx = take_snapshot(agent)
+    cli_hooks.begin_turn(turn_ctx)
+    pending_token = use_pending_tracker(turn_ctx.pending_mention_writes)
+
     task = asyncio.create_task(
-        agent.run(text, session=session_id, after_input_appended=cb),
+        agent.run(text, session=session_backend, after_input_appended=cb),
     )
     try:
         with bind_work(task):
@@ -359,10 +381,15 @@ async def _run(
                 # would raise.
                 agent.context.state.reset()
                 cancelled = True
+                await drain_pending_writes(turn_ctx)
+                if should_rollback(turn_ctx, get_messages(agent)):
+                    await rollback(agent, turn_ctx, save)
             except Exception:
                 # hooks.on_error already rendered; just keep REPL alive.
                 pass
     finally:
+        reset_pending_tracker(pending_token)
+        cli_hooks.end_turn()
         # end_step flushes any pending stream / Live buffers; print cancel
         # banner AFTER so it doesn't get overwritten by late-arriving chunks.
         await adapter.end_step()
