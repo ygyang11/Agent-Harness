@@ -38,7 +38,7 @@ def get_messages(agent: BaseAgent) -> list[Message]:
 
 
 def set_messages(agent: BaseAgent, messages: list[Message]) -> None:
-    agent.context.short_term_memory._messages = messages
+    agent.context.short_term_memory.replace_messages(messages)
 
 
 def update_compressor_model(

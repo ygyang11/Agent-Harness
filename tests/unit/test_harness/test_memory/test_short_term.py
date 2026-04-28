@@ -9,7 +9,9 @@ import pytest
 
 from agent_harness.core.message import Message, Role
 from agent_harness.memory.compressor import ContextCompressor
-from agent_harness.memory.short_term import ShortTermMemory
+from agent_harness.memory.short_term import (
+    CallSnapshot, SectionWeights, ShortTermMemory,
+)
 
 
 class TestShortTermMemoryBasic:
@@ -96,23 +98,25 @@ class TestTokenCount:
 
 class TestTokenTrim:
     @pytest.mark.asyncio
-    async def test_trim_on_get_context(self) -> None:
-        """Token trimming happens in get_context_messages, not add_message."""
+    async def test_get_context_is_pure_read(self) -> None:
+        """get_context_messages is pure read; trim happens in build_llm_messages."""
         mem = ShortTermMemory(max_tokens=50)
         for i in range(20):
             await mem.add_message(Message.user(f"message-{i} " * 10))
         msgs = await mem.get_context_messages()
-        assert len(msgs) < 20
+        assert len(msgs) == 20
 
-    @pytest.mark.asyncio
-    async def test_system_message_preserved(self) -> None:
-        mem = ShortTermMemory(max_tokens=100)
-        await mem.add_message(Message.system("System prompt"))
-        for i in range(20):
-            await mem.add_message(Message.user(f"msg-{i} " * 10))
-        msgs = await mem.get_context_messages()
-        assert msgs[0].role == Role.SYSTEM
-        assert msgs[0].content == "System prompt"
+    def test_trim_by_tokens_drops_excess(self) -> None:
+        msgs = [Message.user(f"message-{i} " * 10) for i in range(20)]
+        trimmed = ShortTermMemory._trim_by_tokens(msgs, 50, "gpt-4o")
+        assert len(trimmed) < 20
+
+    def test_trim_preserves_system_message(self) -> None:
+        msgs = [Message.system("System prompt")]
+        msgs.extend(Message.user(f"msg-{i} " * 10) for i in range(20))
+        trimmed = ShortTermMemory._trim_by_tokens(msgs, 100, "gpt-4o")
+        assert trimmed[0].role == Role.SYSTEM
+        assert trimmed[0].content == "System prompt"
 
     @pytest.mark.asyncio
     async def test_no_trim_when_under_budget(self) -> None:
@@ -122,24 +126,17 @@ class TestTokenTrim:
         msgs = await mem.get_context_messages()
         assert len(msgs) == 2
 
-    @pytest.mark.asyncio
-    async def test_multiple_system_messages(self) -> None:
-        mem = ShortTermMemory(max_tokens=200)
-        await mem.add_message(Message.system("sys1"))
-        await mem.add_message(Message.system("sys2"))
-        for i in range(20):
-            await mem.add_message(Message.user(f"u{i} " * 10))
-        msgs = await mem.get_context_messages()
-        sys_msgs = [m for m in msgs if m.role == Role.SYSTEM]
+    def test_trim_preserves_multiple_system_messages(self) -> None:
+        msgs = [Message.system("sys1"), Message.system("sys2")]
+        msgs.extend(Message.user(f"u{i} " * 10) for i in range(20))
+        trimmed = ShortTermMemory._trim_by_tokens(msgs, 200, "gpt-4o")
+        sys_msgs = [m for m in trimmed if m.role == Role.SYSTEM]
         assert len(sys_msgs) == 2
 
-    @pytest.mark.asyncio
-    async def test_keeps_most_recent(self) -> None:
-        mem = ShortTermMemory(max_tokens=100)
-        for i in range(20):
-            await mem.add_message(Message.user(f"msg-{i} " * 10))
-        msgs = await mem.get_context_messages()
-        contents = [m.content for m in msgs]
+    def test_trim_keeps_most_recent(self) -> None:
+        msgs = [Message.user(f"msg-{i} " * 10) for i in range(20)]
+        trimmed = ShortTermMemory._trim_by_tokens(msgs, 100, "gpt-4o")
+        contents = [m.content for m in trimmed]
         assert "msg-19 " * 10 in contents[-1]
 
 
@@ -162,34 +159,97 @@ class TestCompressorAttribute:
         assert mem.compressor is compressor
 
     @pytest.mark.asyncio
-    async def test_compression_failure_logs_warning_and_falls_back_to_trim(
+    async def test_compression_orchestration_moved_to_context(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
+        from agent_harness.context.context import AgentContext
+        from agent_harness.hooks.base import DefaultHooks
+
         compressor = ContextCompressor(
             llm=AsyncMock(),
             threshold=0.0,
             retain_count=4,
             model="gpt-4o",
         )
-
-        mem = ShortTermMemory(max_tokens=50, compressor=compressor)
+        ctx = AgentContext()
+        ctx.short_term_memory = ShortTermMemory(max_tokens=50, compressor=compressor)
         for i in range(20):
-            await mem.add_message(Message.user(f"message-{i} " * 10))
+            await ctx.short_term_memory.add_message(
+                Message.user(f"message-{i} " * 10)
+            )
 
-        ns_logger = logging.getLogger("agent_harness")
-        ns_logger.addHandler(caplog.handler)
+        target = logging.getLogger("agent_harness.context.context")
+        target.addHandler(caplog.handler)
         try:
-            with patch.object(
-                compressor,
-                "compress",
-                AsyncMock(side_effect=RuntimeError("boom")),
-            ):
-                msgs = await mem.get_context_messages()
-
-            assert len(msgs) > 0
-            assert "Context compression failed" in caplog.text
+            with caplog.at_level(logging.DEBUG, logger="agent_harness.context.context"):
+                with patch.object(
+                    compressor,
+                    "compress",
+                    AsyncMock(side_effect=RuntimeError("boom")),
+                ):
+                    await ctx.maybe_auto_compress(
+                        DefaultHooks(), "test", authoritative_input=10_000,
+                    )
         finally:
-            ns_logger.removeHandler(caplog.handler)
+            target.removeHandler(caplog.handler)
+
+        assert "Compression failed" in caplog.text
+
+
+class TestDisplayedInputTokens:
+    """displayed_input_tokens combines snapshot truth with delta of new messages."""
+
+    @staticmethod
+    def _snap(total: int, msg_count: int, *, reasoning: int = 0) -> CallSnapshot:
+        return CallSnapshot(
+            input_tokens=total - 200,
+            completion_tokens=200,
+            total_tokens=total,
+            cache_read=0,
+            cache_creation=0,
+            reasoning_tokens=reasoning,
+            model="gpt-4o",
+            message_count=msg_count,
+            section_weights=SectionWeights(
+                system_prompt=10, tools_schema=20, dynamic_system=5, history=15,
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_call(self) -> None:
+        mem = ShortTermMemory()
+        assert mem.displayed_input_tokens is None
+
+    @pytest.mark.asyncio
+    async def test_returns_total_when_no_delta(self) -> None:
+        mem = ShortTermMemory()
+        await mem.add_message(Message.user("hi"))
+        await mem.add_message(Message.assistant("hello"))
+        mem.last_call = self._snap(total=500, msg_count=2)
+        assert mem.displayed_input_tokens == 500
+
+    @pytest.mark.asyncio
+    async def test_adds_delta_for_messages_after_snapshot(self) -> None:
+        """User pastes large content after last call — displayed must reflect it,
+        otherwise compressor.should_compress under-triggers and trim drops history.
+        """
+        mem = ShortTermMemory()
+        await mem.add_message(Message.user("hi"))
+        await mem.add_message(Message.assistant("hello"))
+        mem.last_call = self._snap(total=500, msg_count=2)
+        await mem.add_message(Message.user("a " * 5000))
+        displayed = mem.displayed_input_tokens
+        assert displayed is not None
+        assert displayed > 500
+
+    @pytest.mark.asyncio
+    async def test_subtracts_reasoning_tokens(self) -> None:
+        """OpenAI reasoning_tokens are billed but not persisted in buffer."""
+        mem = ShortTermMemory()
+        await mem.add_message(Message.user("q"))
+        await mem.add_message(Message.assistant("a"))
+        mem.last_call = self._snap(total=500, msg_count=2, reasoning=300)
+        assert mem.displayed_input_tokens == 200
 
 
 class TestForgetImportanceScore:

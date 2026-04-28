@@ -38,7 +38,14 @@ tool:
 
 # --- Memory ---
 memory:
-  max_tokens: 100000            # Token budget for short-term memory
+  max_tokens: 100000            # Token budget for short-term memory.
+                                # MUST match the model's actual context window:
+                                # - claude-3-5-sonnet / claude-4: 200000
+                                # - claude-opus-4-7 (1M): 1000000
+                                # - gpt-4o / gpt-4-turbo: 128000
+                                # - o1-preview / o1-mini: 128000
+                                # Default 100k assumes a conservative window;
+                                # set higher for newer / 200k+ models.
   strategy: "summarize"         # "summarize" — LLM-driven compression + trim fallback (default)
                                 # "trim"      — hard token-based truncation only
   forget_threshold: 0.3         # Weighted score below which memories are forgotten

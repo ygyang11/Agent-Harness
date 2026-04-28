@@ -253,6 +253,8 @@ SEP_DOT = "·"
 SEP_ELLIPSIS = "…"
 CONTINUATION = "⎿"
 LEFT_BAR = "┃"
+BAR_FILLED = "█"
+BAR_EMPTY = "░"
 
 
 # ── Persistence ────────────────────────────────────────────────────────

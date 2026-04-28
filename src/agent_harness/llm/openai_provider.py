@@ -95,10 +95,19 @@ class OpenAIProvider(BaseLLM):
             async for chunk in stream:
                 chunk_usage: Usage | None = None
                 if hasattr(chunk, "usage") and chunk.usage:
+                    prompt_details = getattr(chunk.usage, "prompt_tokens_details", None)
+                    cached = getattr(prompt_details, "cached_tokens", 0) or 0
+                    completion_details = getattr(
+                        chunk.usage, "completion_tokens_details", None,
+                    )
+                    reasoning = getattr(completion_details, "reasoning_tokens", 0) or 0
                     chunk_usage = Usage(
                         prompt_tokens=chunk.usage.prompt_tokens or 0,
                         completion_tokens=chunk.usage.completion_tokens or 0,
                         total_tokens=chunk.usage.total_tokens or 0,
+                        cache_read_tokens=cached,
+                        cache_creation_tokens=0,
+                        reasoning_tokens=reasoning,
                     )
 
                 if not chunk.choices:
@@ -255,11 +264,23 @@ class OpenAIProvider(BaseLLM):
             tool_calls=tool_calls,
         )
 
-        usage = Usage(
-            prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
-            completion_tokens=response.usage.completion_tokens if response.usage else 0,
-            total_tokens=response.usage.total_tokens if response.usage else 0,
-        )
+        if response.usage:
+            prompt_details = getattr(response.usage, "prompt_tokens_details", None)
+            cached = getattr(prompt_details, "cached_tokens", 0) or 0
+            completion_details = getattr(
+                response.usage, "completion_tokens_details", None,
+            )
+            reasoning = getattr(completion_details, "reasoning_tokens", 0) or 0
+            usage = Usage(
+                prompt_tokens=response.usage.prompt_tokens or 0,
+                completion_tokens=response.usage.completion_tokens or 0,
+                total_tokens=response.usage.total_tokens or 0,
+                cache_read_tokens=cached,
+                cache_creation_tokens=0,
+                reasoning_tokens=reasoning,
+            )
+        else:
+            usage = Usage()
 
         return LLMResponse(
             message=message,

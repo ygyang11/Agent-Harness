@@ -6,6 +6,8 @@ import math
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ConfigDict
+
 from agent_harness.core.message import Message, Role
 from agent_harness.memory.base import BaseMemory, MemoryItem
 from agent_harness.memory.retrieval import HybridRetriever
@@ -17,15 +19,39 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ShortTermMemory(BaseMemory):
-    """Conversation buffer with optional LLM compression and token-based trim fallback.
+class SectionWeights(BaseModel):
+    """Per-section token-count weights captured at LLM call time.
 
-    When a ContextCompressor is attached, compression runs first
-    (preserving semantics). Token trim only runs as a safety net
-    after compression (or if compression fails/is not attached).
-
-    The system message (if present) is always preserved by the trim fallback.
+    Used proportionally by /context render. Absolute magnitude cancels in
+    calibration to provider-truth prompt_tokens; only ratios matter.
     """
+    system_prompt: int
+    tools_schema: int
+    dynamic_system: int
+    history: int
+
+
+class CallSnapshot(BaseModel):
+    """Frozen snapshot of the most recent LLM call.
+
+    Persisted into SessionState.metadata['_call_snapshot'] for resume.
+    Drives status bar / /context / compressor trigger / /model invalidation.
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    input_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cache_read: int
+    cache_creation: int
+    reasoning_tokens: int = 0
+    model: str
+    message_count: int = 0
+    section_weights: SectionWeights
+
+
+class ShortTermMemory(BaseMemory):
+    """Conversation buffer with optional LLM compression and token-based trim fallback."""
 
     def __init__(
         self,
@@ -37,17 +63,15 @@ class ShortTermMemory(BaseMemory):
         self.model = model
         self._messages: list[Message] = []
         self.compressor = compressor
+        self.last_call: CallSnapshot | None = None
 
     async def add(self, content: str, metadata: dict[str, Any] | None = None) -> None:
-        """Add text content as a user message."""
         await self.add_message(Message.user(content, metadata=metadata or {}))
 
     async def add_message(self, message: Message) -> None:
-        """Append a message. No trimming — trimming happens at the exit point."""
         self._messages.append(message)
 
     async def query(self, query: str, top_k: int = 5) -> list[MemoryItem]:
-        """Query messages using hybrid retrieval (TF-IDF + keyword fallback)."""
         items = [
             MemoryItem(
                 content=msg.content or "",
@@ -65,35 +89,40 @@ class ShortTermMemory(BaseMemory):
         return results
 
     async def get_context_messages(self) -> list[Message]:
-        """Get messages suitable for LLM context, respecting limits.
-
-        Flow: compress (if attached and threshold hit) → trim fallback.
-        """
-        if self.compressor and self.compressor.should_compress(
-            self._messages, self.max_tokens
-        ):
-            try:
-                self._messages = await self.compressor.compress(self._messages)
-            except Exception as e:
-                logger.warning(
-                    "Context compression failed; falling back to token trim: %s",
-                    e,
-                    exc_info=True,
-                )
-
-        self._messages = ShortTermMemory._trim_by_tokens(
-            self._messages, self.max_tokens, self.model
-        )
+        """Pure read of current buffer. No mutation, no compress trigger."""
         return list(self._messages)
+
+    def record_call(self, snapshot: CallSnapshot) -> None:
+        """Atomically install snapshot — only legit writer (called from BaseAgent.call_llm)."""
+        self.last_call = snapshot
+
+    def clear_call_snapshot(self) -> None:
+        self.last_call = None
+
+    def replace_messages(self, new_messages: list[Message]) -> None:
+        """Atomic replace + invalidate snapshot."""
+        self._messages = list(new_messages)
+        self.clear_call_snapshot()
+
+    @property
+    def displayed_input_tokens(self) -> int | None:
+        if self.last_call is None:
+            return None
+        # OpenAI reasoning_tokens are billed-but-ephemeral: counted in
+        # completion_tokens for billing yet never persisted as message content,
+        # so they don't occupy buffer space. Anthropic thinking is persisted
+        # (reasoning_tokens stays 0 there) and stays counted via total_tokens.
+        base = self.last_call.total_tokens - self.last_call.reasoning_tokens
+        delta = self._messages[self.last_call.message_count:]
+        if not delta:
+            return base
+        return base + count_messages_tokens(delta, self.model)
 
     async def clear(self) -> None:
         self._messages.clear()
+        self.clear_call_snapshot()
 
     async def forget(self, threshold: float = 0.3) -> int:
-        """Remove old messages with low weighted score.
-
-        System messages are always preserved.
-        """
         now = datetime.now()
         decay_rate = 0.01
         original_count = len(self._messages)
@@ -110,7 +139,9 @@ class ShortTermMemory(BaseMemory):
             if weighted >= threshold:
                 kept.append(msg)
 
-        self._messages = kept
+        if len(kept) != original_count:
+            self._messages = kept
+            self.clear_call_snapshot()
         return original_count - len(self._messages)
 
     async def size(self) -> int:
@@ -118,18 +149,13 @@ class ShortTermMemory(BaseMemory):
 
     @property
     def token_count(self) -> int:
-        """Current token count of all messages in memory."""
+        """Local tiktoken estimate; deprecated — prefer displayed_input_tokens (provider truth)."""
         return count_messages_tokens(self._messages, self.model)
 
     @staticmethod
     def _trim_by_tokens(
         messages: list[Message], max_tokens: int, model: str
     ) -> list[Message]:
-        """Keep protected system messages + most recent atomic groups within budget.
-
-        Uses atomic grouping to avoid splitting tool_call + tool_result pairs.
-        Background results and compression summaries are NOT protected.
-        """
         from agent_harness.memory.compressor import ContextCompressor
 
         current = count_messages_tokens(messages, model)

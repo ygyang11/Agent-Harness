@@ -12,7 +12,7 @@ async def test_status_prints_three_sections() -> None:
     agent.context.config.approval.mode = "auto"
     stm = MagicMock()
     stm._messages = [1, 2, 3]
-    stm.token_count = 12_345
+    stm.displayed_input_tokens = 12_345
     stm.max_tokens = 128_000
     agent.context.short_term_memory = stm
 

@@ -10,16 +10,20 @@ from agent_harness.context.variables import ContextVariables
 from agent_harness.core.config import HarnessConfig
 from agent_harness.core.event import EventBus
 from agent_harness.core.message import Message, Role
-from agent_harness.memory.short_term import ShortTermMemory
+from agent_harness.llm.types import ProcessUsageMeter
+from agent_harness.memory.short_term import CallSnapshot, ShortTermMemory
 from agent_harness.memory.working_term import WorkingMemory
 
 if TYPE_CHECKING:
+    from agent_harness.hooks.base import DefaultHooks
     from agent_harness.memory.compressor import ContextCompressor
     from agent_harness.memory.long_term import LongTermMemory
     from agent_harness.session.base import SessionState
     from agent_harness.tracing.tracer import Tracer
 
 logger = logging.getLogger(__name__)
+
+_CALL_SNAPSHOT_KEY = "_call_snapshot"
 
 
 class AgentContext:
@@ -45,6 +49,7 @@ class AgentContext:
         event_bus: EventBus | None = None,
         tracer: Tracer | None = None,
         compressor: ContextCompressor | None = None,
+        usage_meter: ProcessUsageMeter | None = None,
     ) -> None:
         self.config = config or HarnessConfig.get()
         self._compressor = compressor
@@ -60,6 +65,7 @@ class AgentContext:
         self.variables = variables or ContextVariables()
         self.event_bus = event_bus or EventBus()
         self.tracer = tracer
+        self.usage_meter: ProcessUsageMeter = usage_meter or ProcessUsageMeter()
 
     @classmethod
     def create(cls, config: HarnessConfig | None = None, **kwargs: Any) -> AgentContext:
@@ -101,6 +107,7 @@ class AgentContext:
             event_bus=self.event_bus,
             tracer=self.tracer,
             compressor=child_compressor,
+            usage_meter=self.usage_meter,
         )
 
     def _next_fork_scope(self, name: str | None) -> str:
@@ -114,6 +121,10 @@ class AgentContext:
         from agent_harness.context.variables import Scope
         from agent_harness.session.base import SessionState as _SessionState
 
+        meta = dict(metadata)
+        if self.short_term_memory.last_call is not None:
+            meta[_CALL_SNAPSHOT_KEY] = self.short_term_memory.last_call.model_dump()
+
         return _SessionState(
             session_id=session_id,
             messages=list(self.short_term_memory._messages),
@@ -122,7 +133,7 @@ class AgentContext:
             variables_agent=self.variables.get_all(Scope.AGENT),
             variables_global=self.variables.get_all(Scope.GLOBAL),
             agent_state=self.state.current.value,
-            metadata=metadata,
+            metadata=meta,
         )
 
     async def restore_from_state(self, state: SessionState, system_prompt: str = "") -> None:
@@ -135,9 +146,11 @@ class AgentContext:
 
         self.short_term_memory._messages = list(state.messages)
 
+        system_prompt_changed = False
         if state.messages and state.messages[0].role == Role.SYSTEM:
             restored_prompt = state.messages[0].content or ""
             if restored_prompt != system_prompt:
+                system_prompt_changed = True
                 if system_prompt:
                     self.short_term_memory._messages[0] = Message.system(system_prompt)
                 else:
@@ -150,6 +163,51 @@ class AgentContext:
             self.variables.set(k, v, scope=Scope.AGENT)
         for k, v in state.variables_global.items():
             self.variables.set(k, v, scope=Scope.GLOBAL)
+
+        raw = state.metadata.get(_CALL_SNAPSHOT_KEY)
+        if raw:
+            try:
+                candidate = CallSnapshot.model_validate(raw)
+                if (
+                    candidate.model == self.short_term_memory.model
+                    and not system_prompt_changed
+                ):
+                    self.short_term_memory.last_call = candidate
+            except Exception:
+                pass
+
+    async def maybe_auto_compress(
+        self,
+        hooks: DefaultHooks,
+        agent_name: str,
+        *,
+        authoritative_input: int | None = None,
+    ) -> None:
+        stm = self.short_term_memory
+        compressor = stm.compressor
+        if compressor is None or not compressor.should_compress(
+            stm._messages, stm.max_tokens, authoritative_input=authoritative_input,
+        ):
+            return
+
+        await hooks.on_compression_start(agent_name)
+        try:
+            new_msgs = await compressor.compress(stm._messages)
+            stm.replace_messages(new_msgs)
+        except Exception as e:
+            logger.debug("Compression failed: %s", e, exc_info=True)
+            return
+
+        res = compressor.take_last_result()
+        if res is None:
+            return
+        await hooks.on_compression_end(
+            agent_name, res.original_count, res.compressed_count, res.summary_tokens,
+        )
+        if res.llm_usage and res.llm_usage.total_tokens:
+            self.usage_meter.record(
+                res.llm_usage, model=compressor.model_name, source="compressor",
+            )
 
     def __repr__(self) -> str:
         return (

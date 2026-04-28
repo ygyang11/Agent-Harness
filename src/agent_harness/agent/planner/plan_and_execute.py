@@ -113,6 +113,7 @@ class PlanAndExecuteAgent(BaseAgent):
                 max_steps=1,
                 prompt_builder=self._prompt_builder.fork(),
             )
+            planner._usage_source = "subagent"
             executor = ExecutorAgent(
                 name=f"{self.name}.executor",
                 llm=self.llm,
@@ -124,6 +125,7 @@ class PlanAndExecuteAgent(BaseAgent):
                 approval_handler=self._executor_approval_handler,
                 prompt_builder=self._prompt_builder.fork(),
             )
+            executor._usage_source = "subagent"
             executor._sandbox = self._sandbox
             replanner = ReplannerAgent(
                 name=f"{self.name}.replanner",
@@ -134,6 +136,7 @@ class PlanAndExecuteAgent(BaseAgent):
                 max_steps=1,
                 prompt_builder=self._prompt_builder.fork(),
             )
+            replanner._usage_source = "subagent"
 
             plan_result = await planner.run(input_text)
             total_usage = total_usage + plan_result.usage

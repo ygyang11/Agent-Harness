@@ -47,14 +47,25 @@ def test_fmt_thresholds() -> None:
     assert _fmt(1_500_000) == "1.5M"
 
 
+def _stub_agent(model: str, input_tokens: int | None, max_tokens: int) -> MagicMock:
+    agent = MagicMock()
+    agent.llm.model_name = model
+    agent.context.config.approval.mode = "auto"
+    stm = MagicMock()
+    stm._messages = []
+    stm.displayed_input_tokens = input_tokens
+    stm.max_tokens = max_tokens
+    agent.context.short_term_memory = stm
+    agent.tools = []
+    agent.tool_registry.has = MagicMock(return_value=False)
+    agent._bg_manager.get_all = MagicMock(return_value=[])
+    return agent
+
+
 def test_status_bar_text_contains_model_and_tokens() -> None:
-    """Render via a stubbed prompt_toolkit app to bypass the real get_app()."""
     from unittest.mock import patch
 
-    agent = MagicMock()
-    agent.llm.model_name = "gpt-5"
-    agent.context.short_term_memory.token_count = 12_345
-    agent.context.short_term_memory.max_tokens = 100_000
+    agent = _stub_agent("gpt-5", 12_345, 100_000)
 
     renderer = make_status_bar_text(agent)
     fake_app = MagicMock()
@@ -69,13 +80,7 @@ def test_status_bar_text_contains_model_and_tokens() -> None:
 
 
 def test_status_bar_text_returns_callable() -> None:
-    """Callable contract: outer call snapshots the O(N) token_count once,
-    inner closure cheaply right-aligns on each redraw."""
-    agent = MagicMock()
-    agent.llm.model_name = "gpt-5"
-    agent.context.short_term_memory.token_count = 500
-    agent.context.short_term_memory.max_tokens = 100_000
-
+    agent = _stub_agent("gpt-5", 500, 100_000)
     renderer = make_status_bar_text(agent)
     assert callable(renderer)
 
@@ -83,10 +88,7 @@ def test_status_bar_text_returns_callable() -> None:
 def test_status_bar_text_right_aligns_to_terminal_width() -> None:
     from unittest.mock import patch
 
-    agent = MagicMock()
-    agent.llm.model_name = "m"
-    agent.context.short_term_memory.token_count = 1
-    agent.context.short_term_memory.max_tokens = 1000
+    agent = _stub_agent("m", 1, 1000)
 
     renderer = make_status_bar_text(agent)
     fake_app = MagicMock()
@@ -95,5 +97,17 @@ def test_status_bar_text_right_aligns_to_terminal_width() -> None:
         out = renderer()
     assert out.value.startswith(" ")
     assert out.value.rstrip().endswith("1/1k")
-    # Leading pad + content should fill up to 40 cols
     assert len(out.value) == 40
+
+
+def test_status_bar_text_dash_when_no_call_yet() -> None:
+    from unittest.mock import patch
+
+    agent = _stub_agent("gpt-5", None, 100_000)
+
+    renderer = make_status_bar_text(agent)
+    fake_app = MagicMock()
+    fake_app.output.get_size.return_value = MagicMock(columns=80)
+    with patch("agent_cli.render.ui.get_app", return_value=fake_app):
+        out = renderer()
+    assert "—/100k" in out.value

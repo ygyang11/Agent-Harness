@@ -1,6 +1,13 @@
 """Token counting utilities for agent_harness.
 
-Wraps tiktoken for accurate token counting across different LLM models.
+Wraps tiktoken for local token estimation. NOT the source of authoritative
+token totals — those come from provider post-call usage (see Usage type and
+ShortTermMemory.last_call). This module is used as:
+  - proportion estimator for /context section breakdown (calibrated to
+    provider truth before display)
+  - fallback when no LLM call has happened yet (e.g. compressor.should_compress
+    on first call before any snapshot exists)
+  - trace truncation in tracing.py
 """
 from __future__ import annotations
 

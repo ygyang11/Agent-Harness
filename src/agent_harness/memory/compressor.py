@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agent_harness.core.message import Message, Role
+from agent_harness.llm.types import Usage
 from agent_harness.utils.token_counter import count_messages_tokens, count_tokens
 
 if TYPE_CHECKING:
@@ -113,6 +114,7 @@ class CompressionResult:
     compressed_count: int
     summary_tokens: int
     archive_path: str | None = None
+    llm_usage: Usage | None = None
 
 
 class ContextCompressor:
@@ -150,6 +152,10 @@ class ContextCompressor:
     def scope(self) -> str:
         return self._scope
 
+    @property
+    def model_name(self) -> str:
+        return self._llm.model_name
+
     def clone(self, *, scope: str | None = None) -> ContextCompressor:
         return ContextCompressor(
             llm=self._llm,
@@ -180,10 +186,17 @@ class ContextCompressor:
             if isinstance(archive_paths, list):
                 self._archive_paths = [str(path) for path in archive_paths]
 
-    def should_compress(self, messages: list[Message], max_tokens: int) -> bool:
-        """Check if compression is needed based on token usage ratio."""
+    def should_compress(
+        self,
+        messages: list[Message],
+        max_tokens: int,
+        *,
+        authoritative_input: int | None = None,
+    ) -> bool:
         if not messages or max_tokens <= 0:
             return False
+        if authoritative_input is not None:
+            return authoritative_input > max_tokens * self._threshold
         current: int = count_messages_tokens(messages, self._model)
         return current > max_tokens * self._threshold
 
@@ -200,6 +213,7 @@ class ContextCompressor:
             Summary is system-role with is_compression_summary metadata,
             so _partition treats it as non_system (telescoping).
         """
+        self._last_result = None
         groups = self._group_atomic_pairs(messages)
         system, older, recent = self._partition(groups)
 
@@ -209,12 +223,10 @@ class ContextCompressor:
         older_msgs = [m for g in older for m in g.messages]
         recent_msgs = [m for g in recent for m in g.messages]
 
-        # LLM summarization FIRST — no side effects until success
-        summary_text = await self._summarize(
+        summary_text, summary_usage = await self._summarize(
             older_msgs, recent_msgs, extra_instructions
         )
 
-        # Side effects only after successful summarization
         self._compression_count += 1
         archive_path: str | None = None
         if self._session_id:
@@ -234,17 +246,12 @@ class ContextCompressor:
         self._last_result = CompressionResult(
             original_count=len(older_msgs) + len(recent_msgs),
             compressed_count=1 + len(recent_msgs),
-            summary_tokens=count_tokens(summary_text, self._model),
+            summary_tokens=summary_usage.completion_tokens,
             archive_path=archive_path,
+            llm_usage=summary_usage,
         )
 
         system_msgs = [m for g in system for m in g.messages]
-
-        # logger.info(
-        #     "Compressed %d messages → summary (round %d)",
-        #     len(older_msgs),
-        #     self._compression_count,
-        # )
 
         return system_msgs + [summary_msg] + recent_msgs
 
@@ -361,11 +368,7 @@ class ContextCompressor:
         older: list[Message],
         recent: list[Message],
         extra_instructions: str | None,
-    ) -> str:
-        """Generate a structured summary via LLM call.
-
-        Uses generate_with_events() for built-in retry (max_retries + backoff).
-        """
+    ) -> tuple[str, Usage]:
         older_text = self._format_messages(older)
         recent_text = (
             self._format_messages(recent) if recent else "(no recent messages)"
@@ -393,9 +396,9 @@ class ContextCompressor:
                 ],
                 **kwargs,
             )
-            return response.message.content or ""
+            return response.message.content or "", response.usage
         except Exception as e:
-            logger.warning("Compression LLM call failed: %s — skipping", e)
+            logger.debug("Compression LLM call failed: %s — skipping", e)
             raise
 
     @staticmethod

@@ -144,6 +144,29 @@ class TestUsageAccumulation:
         assert result.usage.prompt_tokens >= 20
         assert result.usage.completion_tokens >= 10
 
+    @pytest.mark.asyncio
+    async def test_tool_call_response_records_snapshot_and_meter(self) -> None:
+        from agent_harness.agent.react import ReActAgent
+        from tests.conftest import MockTool
+
+        llm = MockLLM()
+        tool = MockTool(response="tool result")
+        llm.add_tool_call_response("mock_tool", {"query": "test"})
+        llm.add_text_response("final")
+
+        agent = ReActAgent(name="test", llm=llm, tools=[tool], system_prompt="")
+        await agent.run("do something")
+
+        snap = agent.context.short_term_memory.last_call
+        assert snap is not None
+        assert snap.input_tokens > 0
+        assert snap.completion_tokens > 0
+        assert snap.total_tokens == snap.input_tokens + snap.completion_tokens
+
+        meter = agent.context.usage_meter
+        assert meter.call_count == 2
+        assert meter.by_source["main"].calls == 2
+
 
 class TestUseLongTermMemory:
     """use_long_term_memory flag on BaseAgent controls call_llm default."""

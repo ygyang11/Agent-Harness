@@ -18,9 +18,17 @@ async def handle(ctx: CommandContext, args: str) -> CommandResult:
     messages = sess.get_messages(agent)
     new_messages = await compressor.compress(messages, extra_instructions=extra)
     sess.set_messages(agent, new_messages)
-    await ctx.save_session()
 
     res = compressor.take_last_result()
+    if res is not None and res.llm_usage and res.llm_usage.total_tokens:
+        agent.context.usage_meter.record(
+            res.llm_usage,
+            model=compressor.model_name,
+            source="compressor",
+        )
+
+    await ctx.save_session()
+
     if res is not None:
         return CommandResult(output=ok(
             "Compacted: ",

@@ -95,16 +95,12 @@ def shorten_home(cwd: str) -> str:
 
 
 def make_status_bar_text(agent: BaseAgent) -> Callable[[], HTML]:
-    """Snapshot model + token_count once; return a closure that right-aligns
-    against the live terminal width on every redraw.
+    """Snapshot once; return closure that right-aligns against terminal width."""
+    from agent_cli.runtime.status import collect as collect_status
 
-    Outer call runs once per ``prompt_async`` (O(N) tokenize, acceptable).
-    Inner closure only pads with spaces — cheap enough for keystroke redraws.
-    """
-    model = agent.llm.model_name
-    cur = agent.context.short_term_memory.token_count
-    mx = agent.context.short_term_memory.max_tokens
-    content = f"{model} · {_fmt(cur)}/{_fmt(mx)} "
+    snap = collect_status(agent)
+    cur_str = _fmt(snap.input_tokens) if snap.input_tokens is not None else "—"
+    content = f"{snap.model} · {cur_str}/{_fmt(snap.max_tokens)} "
 
     def _render() -> HTML:
         width = get_app().output.get_size().columns

@@ -30,6 +30,7 @@ async def handle(ctx: CommandContext, args: str) -> CommandResult:
     new_llm.set_event_bus(agent.context.event_bus)
     agent.llm = new_llm
     agent.context.short_term_memory.model = new_model
+    agent.context.short_term_memory.clear_call_snapshot()
 
     sess.update_compressor_model(agent, new_model, new_llm)
 
@@ -37,7 +38,6 @@ async def handle(ctx: CommandContext, args: str) -> CommandResult:
     return CommandResult(output=ok(
         "Model switched to ",
         (new_model, "bold"),
-        (" (Effective this time)", "muted"),
     ))
 
 

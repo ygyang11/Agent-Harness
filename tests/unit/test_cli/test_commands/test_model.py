@@ -27,7 +27,6 @@ async def test_switch_model_updates_all_sites_no_persistence() -> None:
     save.assert_not_called()
     rendered = render_output(result.output)
     assert "Model switched to gpt-5" in rendered
-    assert "effective this time" in rendered.lower()
 
 
 async def test_switch_model_respects_separate_summary_model() -> None:

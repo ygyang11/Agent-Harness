@@ -356,6 +356,7 @@ class SubAgentTool(BaseTool):
             approval_handler=self._agent._approval_handler,
             prompt_builder=prompt_builder,
         )
+        child._usage_source = "background" if background else "subagent"
         # Share parent's sandbox (child reuses the same container / backend)
         child._sandbox = self._agent._sandbox
 

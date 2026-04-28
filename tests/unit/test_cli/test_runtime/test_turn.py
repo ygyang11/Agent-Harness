@@ -28,10 +28,12 @@ SYS_PROMPT = "You are a careful assistant."
 
 
 def _agent(messages: list[Message], compressor: Any | None = None) -> Any:
+    from agent_harness.memory.short_term import ShortTermMemory
+
     agent = MagicMock()
     agent.system_prompt = SYS_PROMPT
     agent._total_usage = Usage()
-    stm = MagicMock()
+    stm = ShortTermMemory()
     stm._messages = messages
     stm.compressor = compressor
     agent.context.short_term_memory = stm

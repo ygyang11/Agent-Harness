@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
@@ -36,10 +37,12 @@ from agent_harness.core.message import Message, Role, ToolCall, ToolResult
 from agent_harness.hooks import DefaultHooks, resolve_hooks
 from agent_harness.llm import create_llm
 from agent_harness.llm.base import BaseLLM
-from agent_harness.llm.types import LLMResponse, LLMRetryInfo, StreamDelta, Usage
+from agent_harness.llm.types import LLMResponse, LLMRetryInfo, StreamDelta, Usage, UsageSource
+from agent_harness.memory.short_term import CallSnapshot, SectionWeights
 from agent_harness.tool.base import BaseTool, ToolSchema
 from agent_harness.tool.executor import ToolExecutor
 from agent_harness.tool.registry import ToolRegistry
+from agent_harness.utils.token_counter import count_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +119,8 @@ class BaseAgent(ABC, EventEmitter):
         self.max_steps = max_steps
         self.use_long_term_memory = use_long_term_memory
         self._stream = stream
-        self._total_usage = Usage()
+        self._run_usage = Usage()
+        self._usage_source: UsageSource = "main"
         self._session_created_at: datetime | None = None
 
         # Approval setup
@@ -262,14 +266,50 @@ class BaseAgent(ABC, EventEmitter):
     async def _sync_system_prompt(self) -> None:
         if not self.system_prompt:
             return
-        msgs = self.context.short_term_memory._messages
+        stm = self.context.short_term_memory
+        msgs = stm._messages
+        changed = False
         if not msgs:
             msgs.append(Message.system(self.system_prompt))
+            changed = True
         elif msgs[0].role == Role.SYSTEM:
             if msgs[0].content != self.system_prompt:
                 msgs[0] = msgs[0].model_copy(update={"content": self.system_prompt})
+                changed = True
         else:
             msgs.insert(0, Message.system(self.system_prompt))
+            changed = True
+        if changed:
+            stm.clear_call_snapshot()
+
+    def _compute_section_weights(
+        self,
+        messages: list[Message],
+        tool_schemas: list[ToolSchema],
+    ) -> SectionWeights:
+        main_sys = self.system_prompt or None
+        consumed = False
+        dyn_parts: list[str] = []
+        hist_parts: list[str] = []
+        for msg in messages:
+            if msg.role == Role.SYSTEM:
+                if not consumed and main_sys is not None and (msg.content or "") == main_sys:
+                    consumed = True
+                    continue
+                dyn_parts.append(msg.content or "")
+            else:
+                hist_parts.append(msg.content or "")
+
+        tools_text = "\n".join(
+            json.dumps(s.to_openai_format(), ensure_ascii=False) for s in tool_schemas
+        )
+        model = self.llm.model_name
+        return SectionWeights(
+            system_prompt=count_tokens(self.system_prompt or "", model),
+            tools_schema=count_tokens(tools_text, model),
+            dynamic_system=count_tokens("\n".join(dyn_parts), model),
+            history=count_tokens("\n".join(hist_parts), model),
+        )
 
     @property
     def tools(self) -> list[BaseTool]:
@@ -353,7 +393,7 @@ class BaseAgent(ABC, EventEmitter):
         await self.emit("agent.run.start", agent=self.name, input=input_text)
 
         steps: list[StepResult] = []
-        self._total_usage = Usage()
+        self._run_usage = Usage()
         self._loop_detector.reset()
         self._pending_loop_warning = None
         final_output = ""
@@ -419,7 +459,7 @@ class BaseAgent(ABC, EventEmitter):
             output=final_output,
             messages=messages,
             steps=steps,
-            usage=self._total_usage,
+            usage=self._run_usage,
         )
 
         await self.hooks.on_run_end(self.name, final_output)
@@ -562,15 +602,13 @@ class BaseAgent(ABC, EventEmitter):
         if use_long_term is None:
             use_long_term = self.use_long_term_memory
 
-        # Notify before compression (if it will happen)
-        compressor = self.context.short_term_memory.compressor
-        if compressor and compressor.should_compress(
-            self.context.short_term_memory._messages,
-            self.context.short_term_memory.max_tokens,
-        ):
-            await self.hooks.on_compression_start(self.name)
+        stm = self.context.short_term_memory
 
-        # Collect ephemeral context from stateful tools (sorted by context_order)
+        await self.context.maybe_auto_compress(
+            self.hooks, self.name,
+            authoritative_input=stm.displayed_input_tokens,
+        )
+
         extra_sys: list[Message] = []
         sorted_tools = sorted(self.tools, key=lambda t: t.context_order)
         for tool in sorted_tools:
@@ -578,7 +616,6 @@ class BaseAgent(ABC, EventEmitter):
             if ctx_msg:
                 extra_sys.append(ctx_msg)
 
-        # Runtime context (injected after tool context)
         runtime_msg = self._runtime_ctx.build_context_message()
         if runtime_msg:
             extra_sys.append(runtime_msg)
@@ -591,24 +628,14 @@ class BaseAgent(ABC, EventEmitter):
             extra_system_messages=extra_sys or None,
         )
 
-        # Notify after compression (if it happened)
-        if compressor:
-            comp_result = compressor.take_last_result()
-            if comp_result:
-                await self.hooks.on_compression_end(
-                    self.name,
-                    comp_result.original_count,
-                    comp_result.compressed_count,
-                    comp_result.summary_tokens,
-                )
-
-        # Ephemeral loop warning (one-shot, appended at end for context)
         if self._pending_loop_warning:
             messages.append(self._pending_loop_warning)
             self._pending_loop_warning = None
 
         if tools is None and self.tool_schemas:
             tools = self.tool_schemas
+
+        weights = self._compute_section_weights(messages, tools or [])
 
         await self.hooks.on_llm_call(self.name, messages)
         if self.context.state.current != AgentState.THINKING:
@@ -637,9 +664,26 @@ class BaseAgent(ABC, EventEmitter):
                 **kwargs,
             )
 
-        self._total_usage = self._total_usage + response.usage
+        self._run_usage = self._run_usage + response.usage
+        self.context.usage_meter.record(
+            response.usage,
+            model=self.llm.model_name,
+            source=self._usage_source,
+        )
 
-        await self.context.short_term_memory.add_message(response.message)
+        await stm.add_message(response.message)
+
+        stm.record_call(CallSnapshot(
+            input_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+            cache_read=response.usage.cache_read_tokens,
+            cache_creation=response.usage.cache_creation_tokens,
+            reasoning_tokens=response.usage.reasoning_tokens,
+            model=self.llm.model_name,
+            message_count=len(stm._messages),
+            section_weights=weights,
+        ))
         return response
 
     async def execute_tools(self, tool_calls: list[ToolCall]) -> list[ToolResult]:

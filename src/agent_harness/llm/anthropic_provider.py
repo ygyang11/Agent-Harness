@@ -86,6 +86,7 @@ class AnthropicProvider(BaseLLM):
         )
 
         tc_buffer: dict[int, dict[str, str]] = {}
+        last_cum_output = 0
 
         try:
             async with self._client.messages.stream(**request_kwargs) as stream:
@@ -122,12 +123,18 @@ class AnthropicProvider(BaseLLM):
                         msg = getattr(event, "message", None)
                         msg_usage = getattr(msg, "usage", None)
                         if msg_usage:
+                            input_uncached = getattr(msg_usage, "input_tokens", 0) or 0
+                            cache_read = getattr(msg_usage, "cache_read_input_tokens", 0) or 0
+                            cache_creation = getattr(msg_usage, "cache_creation_input_tokens", 0) or 0
+                            total_input = input_uncached + cache_read + cache_creation
                             yield StreamDelta(
                                 chunk=MessageChunk(),
                                 usage=Usage(
-                                    prompt_tokens=getattr(msg_usage, "input_tokens", 0),
+                                    prompt_tokens=total_input,
                                     completion_tokens=0,
-                                    total_tokens=getattr(msg_usage, "input_tokens", 0),
+                                    total_tokens=total_input,
+                                    cache_read_tokens=cache_read,
+                                    cache_creation_tokens=cache_creation,
                                 ),
                             )
                         continue
@@ -156,11 +163,14 @@ class AnthropicProvider(BaseLLM):
                         delta_usage: Usage | None = None
                         evt_usage = getattr(event, "usage", None)
                         if evt_usage:
-                            output_tokens = getattr(evt_usage, "output_tokens", 0)
-                            delta_usage = Usage(
-                                completion_tokens=output_tokens,
-                                total_tokens=output_tokens,
-                            )
+                            current_cum = getattr(evt_usage, "output_tokens", 0) or 0
+                            delta_out = current_cum - last_cum_output
+                            last_cum_output = current_cum
+                            if delta_out:
+                                delta_usage = Usage(
+                                    completion_tokens=delta_out,
+                                    total_tokens=delta_out,
+                                )
 
                         yield StreamDelta(
                             chunk=MessageChunk(
@@ -304,14 +314,21 @@ class AnthropicProvider(BaseLLM):
             tool_calls=tool_calls if tool_calls else None,
         )
 
-        usage = Usage(
-            prompt_tokens=response.usage.input_tokens if response.usage else 0,
-            completion_tokens=response.usage.output_tokens if response.usage else 0,
-            total_tokens=(
-                (response.usage.input_tokens + response.usage.output_tokens)
-                if response.usage else 0
-            ),
-        )
+        if response.usage:
+            input_uncached = response.usage.input_tokens or 0
+            cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
+            cache_creation = getattr(response.usage, "cache_creation_input_tokens", 0) or 0
+            total_input = input_uncached + cache_read + cache_creation
+            output_tokens = response.usage.output_tokens or 0
+            usage = Usage(
+                prompt_tokens=total_input,
+                completion_tokens=output_tokens,
+                total_tokens=total_input + output_tokens,
+                cache_read_tokens=cache_read,
+                cache_creation_tokens=cache_creation,
+            )
+        else:
+            usage = Usage()
 
         finish_reason = FinishReason.STOP
         if response.stop_reason == "tool_use":

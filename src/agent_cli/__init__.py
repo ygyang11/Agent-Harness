@@ -1,7 +1,7 @@
 """Agent-Harness interactive CLI layer."""
 from __future__ import annotations
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 _MISSING_DEPS_TEMPLATE = (
     "Agent-Harness CLI requires the following missing dependencies: {deps}.\n"

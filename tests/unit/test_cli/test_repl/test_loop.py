@@ -429,8 +429,13 @@ def _make_run_repl_mocks(prompt_results: list[object]):
     agent = MagicMock()
     agent.run = AsyncMock(return_value=None)
     agent.llm.model_name = "test-model"
-    agent.context.short_term_memory.token_count = 0
+    agent.context.config.approval.mode = "auto"
+    agent.context.short_term_memory.displayed_input_tokens = 0
     agent.context.short_term_memory.max_tokens = 1000
+    agent.context.short_term_memory._messages = []
+    agent.tools = []
+    agent.tool_registry.has = MagicMock(return_value=False)
+    agent._bg_manager.get_all = MagicMock(return_value=[])
 
     registry = MagicMock()
     registry.dispatch = AsyncMock(return_value=None)
@@ -650,10 +655,12 @@ def _make_real_cli_hooks() -> CliHooks:
 
 
 def _real_agent_with_messages(initial: list[Message]) -> MagicMock:
+    from agent_harness.memory.short_term import ShortTermMemory
+
     agent = MagicMock()
     agent.system_prompt = ""
     agent._total_usage = MagicMock()
-    stm = MagicMock()
+    stm = ShortTermMemory()
     stm._messages = list(initial)
     stm.compressor = None
     agent.context.short_term_memory = stm
