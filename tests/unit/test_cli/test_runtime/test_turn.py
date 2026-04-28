@@ -15,7 +15,6 @@ import pytest
 
 from agent_cli.runtime.session import (
     _TurnContext,
-    drain_pending_writes,
     rollback,
     should_rollback,
     take_snapshot,
@@ -210,63 +209,6 @@ def test_transcript_changed_when_no_main_id_and_identity_msg_replaced() -> None:
     new_a = a.model_copy(update={"content": "DIFFERENT"})
 
     assert transcript_changed(ctx, [new_a, b]) is True
-
-
-# ── drain_pending_writes ──
-
-
-@pytest.mark.asyncio
-async def test_drain_returns_immediately_on_empty() -> None:
-    ctx = _ctx_for([Message.user("u")], main_idx=None)
-
-    await drain_pending_writes(ctx)
-
-    assert ctx.pending_mention_writes == []
-
-
-@pytest.mark.asyncio
-async def test_drain_clears_completed_futures() -> None:
-    loop = asyncio.get_event_loop()
-    fut: asyncio.Future[int] = loop.create_future()
-    fut.set_result(1)
-    ctx = _ctx_for([Message.user("u")], main_idx=None)
-    ctx.pending_mention_writes.append(fut)
-
-    await drain_pending_writes(ctx)
-
-    assert ctx.pending_mention_writes == []
-
-
-@pytest.mark.asyncio
-async def test_drain_awaits_running_tasks() -> None:
-    completed: list[bool] = []
-
-    async def slow() -> None:
-        await asyncio.sleep(0.01)
-        completed.append(True)
-
-    task = asyncio.create_task(slow())
-    ctx = _ctx_for([Message.user("u")], main_idx=None)
-    ctx.pending_mention_writes.append(task)
-
-    await drain_pending_writes(ctx)
-
-    assert completed == [True]
-    assert ctx.pending_mention_writes == []
-
-
-@pytest.mark.asyncio
-async def test_drain_swallows_task_exceptions() -> None:
-    async def boom() -> None:
-        raise RuntimeError("boom")
-
-    task = asyncio.create_task(boom())
-    ctx = _ctx_for([Message.user("u")], main_idx=None)
-    ctx.pending_mention_writes.append(task)
-
-    await drain_pending_writes(ctx)
-
-    assert ctx.pending_mention_writes == []
 
 
 # ── should_rollback ──

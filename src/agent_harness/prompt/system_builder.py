@@ -46,11 +46,15 @@ class SystemPromptBuilder:
     def fork(self) -> SystemPromptBuilder:
         """Create an independent copy for child agents.
 
-        Child inherits all parent sections but can override/extend
-        without affecting the parent.
+        Child inherits parent sections marked ``propagate_to_fork=True`` and
+        can override/extend without affecting the parent.
         """
         child = SystemPromptBuilder()
-        child._sections = deepcopy(self._sections)
+        child._sections = {
+            name: deepcopy(section)
+            for name, section in self._sections.items()
+            if section.propagate_to_fork
+        }
         return child
 
     @property

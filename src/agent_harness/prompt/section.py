@@ -29,6 +29,9 @@ class PromptSection:
         enabled: Master switch. If False, section is always skipped.
         condition: Optional callable(context) -> bool. If provided and returns
             False, section is skipped even when enabled=True.
+        propagate_to_fork: If False, this section is dropped when its owning
+            builder is forked (e.g. for sub-agents). Use for sections whose
+            corresponding capability only exists on the root agent.
     """
 
     name: str
@@ -36,6 +39,7 @@ class PromptSection:
     content: str | Callable[..., str] = ""
     enabled: bool = True
     condition: Callable[..., bool] | None = None
+    propagate_to_fork: bool = True
 
     def resolve(self, context: dict[str, Any] | None = None) -> str:
         """Resolve this section to a string.

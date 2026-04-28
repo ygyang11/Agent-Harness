@@ -77,3 +77,15 @@ class TestFrozen:
 class TestOrderConstants:
     def test_ordering(self) -> None:
         assert ORDER_INTRO < ORDER_GUIDELINES < ORDER_TOOLS < ORDER_CUSTOM
+
+
+class TestPropagateToFork:
+    def test_default_is_true(self) -> None:
+        s = PromptSection(name="x", order=100, content="Hello")
+        assert s.propagate_to_fork is True
+
+    def test_explicit_false(self) -> None:
+        s = PromptSection(
+            name="x", order=100, content="Hello", propagate_to_fork=False,
+        )
+        assert s.propagate_to_fork is False

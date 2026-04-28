@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from prompt_toolkit.completion import Completer
 
     from agent_cli.adapter import CliAdapter
+    from agent_cli.runtime.session import SaveSession
     from agent_harness.agent.base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,7 @@ async def exec_shell(
     agent: BaseAgent,
     completer: Completer,
     adapter: CliAdapter,
+    save: SaveSession,
 ) -> None:
     if sys.platform == "win32":
         await adapter.on_shell_run(
@@ -248,18 +250,19 @@ async def exec_shell(
         new_cwd = _read_text(cwd_f.name).strip() or state.cwd
         parsed_env = _parse_env0(_read_bytes(env_f.name))
         old_cwd = state.cwd
+        post_notices: list[str] = []
 
         if new_cwd != old_cwd:
             bg = getattr(agent, "_bg_manager", None)
             if bg is not None and bg.has_running():
                 from agent_cli.render.notices import format_warning  # noqa: PLC0415
 
-                await adapter.print_inline(
-                    format_warning(
-                        "Cannot change directory while background tasks are "
-                        f"running; keeping {old_cwd}"
-                    )
+                msg = (
+                    "Cannot change directory while background tasks are "
+                    f"running; keeping {old_cwd}"
                 )
+                await adapter.print_inline(format_warning(msg))
+                post_notices.append(msg)
                 new_cwd = old_cwd
             else:
                 try:
@@ -267,9 +270,9 @@ async def exec_shell(
                 except OSError as e:
                     from agent_cli.render.notices import format_warning  # noqa: PLC0415
 
-                    await adapter.print_inline(
-                        format_warning(f"Could not change directory to {new_cwd}: {e}")
-                    )
+                    msg = f"Could not change directory to {new_cwd}: {e}"
+                    await adapter.print_inline(format_warning(msg))
+                    post_notices.append(msg)
                     new_cwd = old_cwd
                 else:
                     if hasattr(completer, "invalidate_file_root"):
@@ -286,6 +289,16 @@ async def exec_shell(
         state.cwd = new_cwd
         if "PATH" in parsed_env:
             state.env = _merge_env(sent_env, parsed_env)
+
+        from agent_cli.runtime.conversation import append_shell_run  # noqa: PLC0415
+        await append_shell_run(
+            agent,
+            command=command,
+            exit_code=exit_code,
+            output=output,
+            save=save,
+            post_notices=post_notices,
+        )
     finally:
         for f in (cwd_f, env_f):
             if f is not None:

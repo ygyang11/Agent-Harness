@@ -225,8 +225,8 @@ async def test_handle_line_shell_lane_dispatches_to_exec_shell(
 
     captured: list[tuple[object, ...]] = []
 
-    async def fake_exec_shell(state, command, ag, comp, ad):
-        captured.append((command, ag, comp))
+    async def fake_exec_shell(state, command, ag, comp, ad, save):
+        captured.append((command, ag, comp, save))
 
     monkeypatch.setattr(
         "agent_cli.runtime.shell.exec_shell",
@@ -291,7 +291,7 @@ async def test_handle_line_shell_cancellation_renders_message(
     pt_session = MagicMock()
     pt_session.completer = MagicMock()
 
-    async def cancelling_exec(state, command, ag, comp, ad):
+    async def cancelling_exec(state, command, ag, comp, ad, save):
         raise asyncio.CancelledError()
 
     monkeypatch.setattr(
@@ -316,6 +316,79 @@ async def test_handle_line_shell_cancellation_renders_message(
 
     assert any(
         c.args and "cancelled" in str(c.args[0]).lower() for c in console.print.call_args_list
+    )
+
+
+async def test_handle_line_shell_cancel_drains_pending_writes_before_banner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_cli.runtime.conversation import _pending_writes
+    from agent_cli.runtime.shell import ShellState
+
+    console = MagicMock()
+    pt_session = MagicMock()
+    pt_session.completer = MagicMock()
+
+    write_done = asyncio.Event()
+    write_started = asyncio.Event()
+    cancelled_seen_during_write: list[bool] = []
+
+    async def slow_write_then_record() -> None:
+        try:
+            await asyncio.sleep(0.05)
+        finally:
+            write_done.set()
+
+    async def faux_exec(state, command, ag, comp, ad, save):
+        tracker = _pending_writes.get()
+        assert tracker is not None, "tracker must be bound by !-lane"
+        write_task = asyncio.ensure_future(slow_write_then_record())
+        tracker.append(write_task)
+        write_started.set()
+        try:
+            await asyncio.shield(write_task)
+        except asyncio.CancelledError:
+            cancelled_seen_during_write.append(True)
+            raise
+
+    monkeypatch.setattr("agent_cli.runtime.shell.exec_shell", faux_exec)
+
+    cancelled_at_print: list[bool] = []
+
+    def record_print(*args: object, **kwargs: object) -> None:
+        if args and "cancelled" in str(args[0]).lower():
+            cancelled_at_print.append(write_done.is_set())
+
+    console.print = MagicMock(side_effect=record_print)
+
+    async def runner() -> None:
+        await _handle_line(
+            "!sleep 30",
+            MagicMock(),
+            console,
+            MagicMock(),
+            "sid",
+            AsyncMock(),
+            MagicMock(),
+            MagicMock(),
+            ShellState(),
+            pt_session,
+            MagicMock(),
+            MagicMock(),
+        )
+
+    task = asyncio.create_task(runner())
+    await write_started.wait()
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    assert cancelled_seen_during_write == [True]
+    assert write_done.is_set()
+    assert cancelled_at_print == [True], (
+        "cancel banner must print AFTER pending writes drain"
     )
 
 

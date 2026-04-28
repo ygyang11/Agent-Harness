@@ -118,3 +118,27 @@ class TestFork:
         assert grandparent.build() == "GP"
         assert parent.build() == "GP\n\nP"
         assert child.build() == "C\n\nP"
+
+    def test_fork_skips_non_propagating_sections(self) -> None:
+        parent = SystemPromptBuilder()
+        parent.register(PromptSection(name="a", order=100, content="Shared"))
+        parent.register(
+            PromptSection(
+                name="root_only", order=200, content="RootOnly",
+                propagate_to_fork=False,
+            )
+        )
+        child = parent.fork()
+        assert "Shared" in parent.build()
+        assert "RootOnly" in parent.build()
+        assert "Shared" in child.build()
+        assert "RootOnly" not in child.build()
+        assert child.has("root_only") is False
+
+    def test_fork_default_sections_propagate(self) -> None:
+        parent = SystemPromptBuilder()
+        parent.register(PromptSection(name="a", order=100, content="A"))
+        parent.register(PromptSection(name="b", order=200, content="B"))
+        child = parent.fork()
+        assert "A" in child.build()
+        assert "B" in child.build()

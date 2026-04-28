@@ -22,6 +22,8 @@ def create_cli_agent(
     REPL — a single run should never be terminated by a step ceiling.
     """
     from agent_cli.approval_handler import CliApprovalHandler
+    from agent_cli.prompt import make_user_actions_section
+    from agent_harness.prompt.sections import create_default_builder
 
     cfg = config or HarnessConfig.get()
     if hooks is None:
@@ -29,12 +31,16 @@ def create_cli_agent(
     if approval_handler is None:
         approval_handler = CliApprovalHandler()
 
+    prompt_builder = create_default_builder()
+    prompt_builder.register(make_user_actions_section())
+
     agent = ReActAgent(
         name="cli",
         tools=BUILTIN_TOOLS,
         hooks=hooks,
         approval_handler=approval_handler,
         config=cfg,
+        prompt_builder=prompt_builder,
         stream=True,
         max_steps=sys.maxsize,
     )

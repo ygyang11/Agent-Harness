@@ -30,6 +30,7 @@ def _agent(*, bg_running: bool = False) -> MagicMock:
     a._prompt_builder.build = MagicMock(return_value="SP")
     a._make_builder_context = MagicMock(return_value={})
     a._bg_manager.has_running = MagicMock(return_value=bg_running)
+    a.context.short_term_memory.add_message = AsyncMock()
     return a
 
 
@@ -44,6 +45,10 @@ def _completer() -> MagicMock:
     c = MagicMock()
     c.invalidate_file_root = MagicMock()
     return c
+
+
+def _save() -> AsyncMock:
+    return AsyncMock()
 
 
 def _state(tmp_path: Path) -> ShellState:
@@ -201,7 +206,7 @@ async def test_exec_shell_persists_cwd(tmp_path: Path) -> None:
     state = _state(tmp_path)
     saved_cwd = os.getcwd()
     try:
-        await exec_shell(state, "cd sub", _agent(), _completer(), _adapter())
+        await exec_shell(state, "cd sub", _agent(), _completer(), _adapter(), _save())
         assert state.cwd == str(sub.resolve())
     finally:
         os.chdir(saved_cwd)
@@ -212,9 +217,15 @@ async def test_exec_shell_persists_export_and_unset(tmp_path: Path) -> None:
     state = _state(tmp_path)
     saved_cwd = os.getcwd()
     try:
-        await exec_shell(state, "export HARNESS_T_X=hello", _agent(), _completer(), _adapter())
+        await exec_shell(
+            state, "export HARNESS_T_X=hello",
+            _agent(), _completer(), _adapter(), _save(),
+        )
         assert state.env.get("HARNESS_T_X") == "hello"
-        await exec_shell(state, "unset HARNESS_T_X", _agent(), _completer(), _adapter())
+        await exec_shell(
+            state, "unset HARNESS_T_X",
+            _agent(), _completer(), _adapter(), _save(),
+        )
         assert "HARNESS_T_X" not in state.env
     finally:
         os.chdir(saved_cwd)
@@ -233,6 +244,7 @@ async def test_exec_shell_persists_cwd_on_failed_command(tmp_path: Path) -> None
             _agent(),
             _completer(),
             _adapter(),
+            _save(),
         )
         assert state.cwd == str(sub.resolve())
     finally:
@@ -245,7 +257,7 @@ async def test_exec_shell_renders_run_with_output(tmp_path: Path) -> None:
     adapter = _adapter()
     saved_cwd = os.getcwd()
     try:
-        await exec_shell(state, "echo hi", _agent(), _completer(), adapter)
+        await exec_shell(state, "echo hi", _agent(), _completer(), adapter, _save())
     finally:
         os.chdir(saved_cwd)
     adapter.on_shell_run.assert_awaited_once()
@@ -261,7 +273,7 @@ async def test_exec_shell_non_zero_exit_propagated(tmp_path: Path) -> None:
     adapter = _adapter()
     saved_cwd = os.getcwd()
     try:
-        await exec_shell(state, "false", _agent(), _completer(), adapter)
+        await exec_shell(state, "false", _agent(), _completer(), adapter, _save())
     finally:
         os.chdir(saved_cwd)
     args = adapter.on_shell_run.await_args.args
@@ -275,7 +287,7 @@ async def test_windows_graceful_disable() -> None:
     state = ShellState()
     adapter = _adapter()
     with patch.object(sys, "platform", "win32"):
-        await exec_shell(state, "ls", _agent(), _completer(), adapter)
+        await exec_shell(state, "ls", _agent(), _completer(), adapter, _save())
     args = adapter.on_shell_run.await_args.args
     assert "Windows" in args[2]
 
@@ -286,7 +298,7 @@ async def test_interactive_command_rejected(tmp_path: Path) -> None:
     adapter = _adapter()
     saved_cwd = os.getcwd()
     try:
-        await exec_shell(state, "vim foo", _agent(), _completer(), adapter)
+        await exec_shell(state, "vim foo", _agent(), _completer(), adapter, _save())
     finally:
         os.chdir(saved_cwd)
     adapter.on_shell_run.assert_not_called()
@@ -299,7 +311,7 @@ async def test_safe_command_not_blocked(tmp_path: Path) -> None:
     adapter = _adapter()
     saved_cwd = os.getcwd()
     try:
-        await exec_shell(state, "echo hi", _agent(), _completer(), adapter)
+        await exec_shell(state, "echo hi", _agent(), _completer(), adapter, _save())
     finally:
         os.chdir(saved_cwd)
     adapter.on_shell_run.assert_awaited_once()
@@ -318,7 +330,7 @@ async def test_shell_binary_not_found(tmp_path: Path) -> None:
     adapter = _adapter()
     saved_cwd = os.getcwd()
     try:
-        await exec_shell(state, "echo hi", _agent(), _completer(), adapter)
+        await exec_shell(state, "echo hi", _agent(), _completer(), adapter, _save())
     finally:
         os.chdir(saved_cwd)
     adapter.on_shell_run.assert_awaited_once()
@@ -340,7 +352,7 @@ async def test_cwd_vanished_self_heal(tmp_path: Path) -> None:
     try:
         shutil.rmtree(sub)
         adapter = _adapter()
-        await exec_shell(state, "echo hi", _agent(), _completer(), adapter)
+        await exec_shell(state, "echo hi", _agent(), _completer(), adapter, _save())
         assert state.cwd != str(sub)
         adapter.print_inline.assert_awaited()
     finally:
@@ -356,7 +368,7 @@ async def test_cd_blocked_when_background_running(tmp_path: Path) -> None:
     saved_cwd = os.getcwd()
     try:
         await exec_shell(
-            state, "cd sub", _agent(bg_running=True), _completer(), adapter,
+            state, "cd sub", _agent(bg_running=True), _completer(), adapter, _save(),
         )
         assert state.cwd == str(tmp_path)
         adapter.print_inline.assert_awaited()
@@ -437,3 +449,211 @@ def test_state_cleanup_idempotent(tmp_path: Path) -> None:
     state = ShellState()
     state.cleanup()
     state.cleanup()
+
+
+# ---------- short-memory injection: append_shell_run wiring ----------
+
+
+@skip_no_shell
+async def test_normal_path_invokes_append_shell_run(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    adapter = _adapter()
+    save = _save()
+    timeline: list[str] = []
+
+    orig_on = adapter.on_shell_run
+
+    async def tracking_on_shell_run(*args: Any, **kwargs: Any) -> Any:
+        timeline.append("on_shell_run")
+        return await orig_on(*args, **kwargs)
+
+    adapter.on_shell_run = tracking_on_shell_run
+
+    captured: dict[str, Any] = {}
+
+    async def fake_append_shell_run(_agent: Any, **kwargs: Any) -> None:
+        timeline.append("append_shell_run")
+        captured.update(kwargs)
+
+    saved_cwd = os.getcwd()
+    try:
+        with patch(
+            "agent_cli.runtime.conversation.append_shell_run",
+            new=fake_append_shell_run,
+        ):
+            await exec_shell(state, "echo hi", _agent(), _completer(), adapter, save)
+    finally:
+        os.chdir(saved_cwd)
+
+    assert timeline[: 2] == ["on_shell_run", "append_shell_run"]
+    assert captured["command"] == "echo hi"
+    assert captured["exit_code"] == 0
+    assert "hi" in captured["output"]
+    assert captured["save"] is save
+
+
+@skip_no_shell
+async def test_cancel_path_skips_append_shell_run(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    adapter = _adapter()
+    save = _save()
+    called = False
+
+    async def fake_append_shell_run(_agent: Any, **kwargs: Any) -> None:
+        nonlocal called
+        called = True
+
+    saved_cwd = os.getcwd()
+
+    async def slow_communicate(self: Any) -> tuple[bytes, bytes]:
+        await asyncio.sleep(60)
+        return b"", b""
+
+    try:
+        with patch(
+            "agent_cli.runtime.conversation.append_shell_run",
+            new=fake_append_shell_run,
+        ), patch(
+            "asyncio.subprocess.Process.communicate",
+            new=slow_communicate,
+        ):
+            task = asyncio.create_task(
+                exec_shell(state, "sleep 60", _agent(), _completer(), adapter, save),
+            )
+            await asyncio.sleep(0.1)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+    finally:
+        os.chdir(saved_cwd)
+
+    assert called is False
+
+
+@skip_no_shell
+async def test_cd_reject_when_bg_running_surfaces_notice_to_append(
+    tmp_path: Path,
+) -> None:
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    state = _state(tmp_path)
+    adapter = _adapter()
+    save = _save()
+    captured: dict[str, Any] = {}
+
+    async def fake_append_shell_run(_agent: Any, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    saved_cwd = os.getcwd()
+    try:
+        with patch(
+            "agent_cli.runtime.conversation.append_shell_run",
+            new=fake_append_shell_run,
+        ):
+            await exec_shell(
+                state, "cd sub",
+                _agent(bg_running=True), _completer(), adapter, save,
+            )
+    finally:
+        os.chdir(saved_cwd)
+
+    notices = captured.get("post_notices", [])
+    assert len(notices) == 1
+    assert "Cannot change directory" in notices[0]
+    assert "background tasks" in notices[0]
+    assert state.cwd == str(tmp_path)
+
+
+@skip_no_shell
+async def test_chdir_failure_surfaces_notice_to_append(tmp_path: Path) -> None:
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    state = _state(tmp_path)
+    adapter = _adapter()
+    save = _save()
+    captured: dict[str, Any] = {}
+
+    async def fake_append_shell_run(_agent: Any, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    def chdir_fail(_path: str) -> None:
+        raise PermissionError("denied")
+
+    saved_cwd = os.getcwd()
+    try:
+        with patch(
+            "agent_cli.runtime.conversation.append_shell_run",
+            new=fake_append_shell_run,
+        ), patch("os.chdir", side_effect=chdir_fail):
+            await exec_shell(
+                state, "cd sub", _agent(), _completer(), adapter, save,
+            )
+    finally:
+        os.chdir(saved_cwd)
+
+    notices = captured.get("post_notices", [])
+    assert len(notices) == 1
+    assert "Could not change directory" in notices[0]
+    assert "denied" in notices[0]
+    assert state.cwd == str(tmp_path)
+
+
+@skip_no_shell
+async def test_normal_cd_emits_no_post_notices(tmp_path: Path) -> None:
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    state = _state(tmp_path)
+    adapter = _adapter()
+    save = _save()
+    captured: dict[str, Any] = {}
+
+    async def fake_append_shell_run(_agent: Any, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    saved_cwd = os.getcwd()
+    try:
+        with patch(
+            "agent_cli.runtime.conversation.append_shell_run",
+            new=fake_append_shell_run,
+        ):
+            await exec_shell(
+                state, "cd sub", _agent(), _completer(), adapter, save,
+            )
+    finally:
+        os.chdir(saved_cwd)
+
+    assert captured.get("post_notices", []) == []
+    assert state.cwd == str(sub.resolve())
+
+
+async def test_file_not_found_skips_append_shell_run(tmp_path: Path) -> None:
+    state = ShellState(
+        cwd=str(tmp_path),
+        env=dict(os.environ),
+        shell_bin="/nonexistent/shell",
+    )
+    state._snapshot_tried = True
+    adapter = _adapter()
+    save = _save()
+    called = False
+
+    async def fake_append_shell_run(_agent: Any, **kwargs: Any) -> None:
+        nonlocal called
+        called = True
+
+    saved_cwd = os.getcwd()
+    try:
+        with patch(
+            "agent_cli.runtime.conversation.append_shell_run",
+            new=fake_append_shell_run,
+        ):
+            await exec_shell(state, "echo hi", _agent(), _completer(), adapter, save)
+    finally:
+        os.chdir(saved_cwd)
+
+    assert called is False
+    adapter.on_shell_run.assert_awaited_once()
+    args = adapter.on_shell_run.await_args.args
+    assert args[1] == 127

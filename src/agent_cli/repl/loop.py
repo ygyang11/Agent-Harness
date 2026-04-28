@@ -24,9 +24,19 @@ from agent_cli.repl.keybindings import build_keybindings, reset_ctrl_c_state
 from agent_cli.repl.mentions import expand_mentions
 from agent_cli.repl.paste import PastePlaceholderProcessor, PasteStore
 from agent_cli.runtime import background
-from agent_cli.runtime.conversation import reset_pending_tracker, use_pending_tracker
-from agent_cli.runtime.session import SaveSession, get_messages, make_save_session
-from agent_cli.runtime.session import drain_pending_writes, rollback, should_rollback, take_snapshot
+from agent_cli.runtime.conversation import (
+    drain_pending,
+    reset_pending_tracker,
+    use_pending_tracker,
+)
+from agent_cli.runtime.session import (
+    SaveSession,
+    get_messages,
+    make_save_session,
+    rollback,
+    should_rollback,
+    take_snapshot,
+)
 from agent_cli.runtime.shell import ShellState
 from agent_cli.runtime.sigint import bind_work
 from agent_cli.theme import APPROVAL, COMPRESSION, PROMPT
@@ -289,18 +299,24 @@ async def _handle_line(
 
         completer = pt_session.completer
         assert completer is not None
-        task = asyncio.create_task(
-            exec_shell(shell_state, cmd, agent, completer, adapter),
-        )
+        pending_writes: list[asyncio.Future[Any]] = []
+        token = use_pending_tracker(pending_writes)
         try:
-            with bind_work(task):
-                await task
-        except asyncio.CancelledError:
-            console.print("[dim]Command cancelled.[/dim]")
-            console.print()
-        except Exception as e:
-            console.print(f"[error]Unexpected shell error: {e}[/error]")
-            console.print()
+            task = asyncio.create_task(
+                exec_shell(shell_state, cmd, agent, completer, adapter, save),
+            )
+            try:
+                with bind_work(task):
+                    await task
+            except asyncio.CancelledError:
+                await drain_pending(pending_writes)
+                console.print("[dim]Command cancelled.[/dim]")
+                console.print()
+            except Exception as e:
+                console.print(f"[error]Unexpected shell error: {e}[/error]")
+                console.print()
+        finally:
+            reset_pending_tracker(token)
         return False
 
     ctx = CommandContext(
@@ -381,7 +397,7 @@ async def _run(
                 # would raise.
                 agent.context.state.reset()
                 cancelled = True
-                await drain_pending_writes(turn_ctx)
+                await drain_pending(turn_ctx.pending_mention_writes)
                 if should_rollback(turn_ctx, get_messages(agent)):
                     await rollback(agent, turn_ctx, save)
             except Exception:

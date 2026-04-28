@@ -122,14 +122,6 @@ def transcript_changed(ctx: _TurnContext, current: list[Message]) -> bool:
     return not relevant.issubset(current_ids)
 
 
-async def drain_pending_writes(ctx: _TurnContext) -> None:
-    if not ctx.pending_mention_writes:
-        return
-    pending = list(ctx.pending_mention_writes)
-    ctx.pending_mention_writes.clear()
-    await asyncio.gather(*pending, return_exceptions=True)
-
-
 def should_rollback(ctx: _TurnContext, current: list[Message]) -> bool:
     if ctx.committed:
         return False
