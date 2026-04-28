@@ -8,6 +8,7 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse
 
 from agent_harness.tool.decorator import tool
+from agent_harness.utils.http_retry import HttpRetryConfig, http_get_text_with_retry
 from agent_harness.utils.token_counter import truncate_text_by_tokens
 
 
@@ -17,6 +18,9 @@ class WebFetchConfig:
 
     max_response_tokens: int = 5_000
     default_timeout: int = 30
+    retry_max_attempts: int = 3
+    retry_base_delay: float = 0.5
+    executor_timeout_slack: float = 5.0
     allowed_schemes: frozenset[str] = frozenset({"http", "https"})
     user_agent: str = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -39,6 +43,11 @@ class WebFetchConfig:
 
 
 _CFG = WebFetchConfig()
+_EXECUTOR_TIMEOUT = (
+    _CFG.default_timeout * _CFG.retry_max_attempts
+    + _CFG.retry_base_delay * max(0, _CFG.retry_max_attempts - 1)
+    + _CFG.executor_timeout_slack
+)
 
 
 def _validate_url(url: str) -> None:
@@ -121,7 +130,14 @@ def _format_response(body: str, content_type: str) -> str:
     return body
 
 
-@tool(approval_resource_key="url")
+def _retry_policy() -> HttpRetryConfig:
+    return HttpRetryConfig(
+        max_attempts=max(1, _CFG.retry_max_attempts),
+        base_delay=_CFG.retry_base_delay,
+    )
+
+
+@tool(approval_resource_key="url", executor_timeout=_EXECUTOR_TIMEOUT)
 async def web_fetch(url: str, timeout: int = 30) -> str:
     """Fetch content from a URL and return readable text.
 
@@ -154,39 +170,39 @@ async def web_fetch(url: str, timeout: int = 30) -> str:
         return "Error: aiohttp is not installed. Run `pip install aiohttp`."
 
     try:
-        timeout_cfg = aiohttp.ClientTimeout(total=timeout)
         headers = {"User-Agent": _CFG.user_agent}
-        async with aiohttp.ClientSession(timeout=timeout_cfg, headers=headers) as session:
-            async with session.get(url) as resp:
-                if resp.status >= 400:
-                    return f"Error: HTTP {resp.status} for {url}"
+        response = await http_get_text_with_retry(
+            url,
+            headers=headers,
+            timeout=timeout,
+            retry=_retry_policy(),
+        )
+        if response.status >= 400:
+            return f"Error: HTTP {response.status} for {url}"
 
-                content_type = resp.headers.get("Content-Type", "")
+        content_type = response.headers.get("Content-Type", "")
 
-                if _is_pdf(content_type, url):
-                    return (
-                        "Error: URL is a PDF document. "
-                        "Use `pdf_parser` tool to extract text from this PDF "
-                        "if needed and the tool is available."
-                    )
+        if _is_pdf(content_type, url):
+            return (
+                "Error: URL is a PDF document. "
+                "Use `pdf_parser` tool to extract text from this PDF "
+                "if needed and the tool is available."
+            )
 
-                if _is_binary_content_type(content_type):
-                    ct_short = content_type.split(";")[0].strip()
-                    return f"Error: unsupported content type: {ct_short} (binary content cannot be read)"
+        if _is_binary_content_type(content_type):
+            ct_short = content_type.split(";")[0].strip()
+            return f"Error: unsupported content type: {ct_short} (binary content cannot be read)"
 
-                try:
-                    body = await resp.text()
-                except UnicodeDecodeError:
-                    return "Error: failed to decode response (binary or non-UTF-8 content)"
-
-                formatted = _format_response(body, content_type)
-                return truncate_text_by_tokens(
-                    formatted,
-                    max_tokens=_CFG.max_response_tokens,
-                    suffix="\n... (truncated)",
-                )
+        formatted = _format_response(response.body, content_type)
+        return truncate_text_by_tokens(
+            formatted,
+            max_tokens=_CFG.max_response_tokens,
+            suffix="\n... (truncated)",
+        )
     except asyncio.TimeoutError:
         return f"Error: request timed out after {timeout}s"
+    except UnicodeDecodeError:
+        return "Error: failed to decode response (binary or non-UTF-8 content)"
     except aiohttp.ClientError as exc:
         return f"Error: {exc}"
     except Exception as exc:  # noqa: BLE001

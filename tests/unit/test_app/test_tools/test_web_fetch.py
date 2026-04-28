@@ -1,8 +1,11 @@
 """Tests for web_fetch tool."""
 from __future__ import annotations
 
+import sys
+
 import pytest
 
+from agent_harness.utils.http_retry import HttpRetryConfig, HttpTextResponse
 from agent_app.tools.web.web_fetch import (
     _extract_text_from_html,
     _format_response,
@@ -45,6 +48,95 @@ class TestWebFetchValidation:
     async def test_no_scheme_returns_error(self) -> None:
         result = await web_fetch.execute(url="not-a-url")
         assert result.startswith("Error:")
+
+    def test_executor_timeout_allows_internal_retries(self) -> None:
+        assert web_fetch.executor_timeout is not None
+        assert web_fetch.executor_timeout > 30
+
+
+class TestWebFetchExecution:
+    @pytest.mark.asyncio
+    async def test_html_response_uses_retry_helper(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        module = sys.modules["agent_app.tools.web.web_fetch"]
+        captured: dict[str, object] = {}
+
+        async def _fake_http_get_text_with_retry(
+            url: str,
+            *,
+            headers: dict[str, str] | None = None,
+            timeout: int = 30,
+            retry: HttpRetryConfig,
+        ) -> HttpTextResponse:
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["timeout"] = timeout
+            captured["retry"] = retry
+            return HttpTextResponse(
+                status=200,
+                headers={"Content-Type": "text/html; charset=utf-8"},
+                body="<html><body><h1>Hello</h1><p>world</p></body></html>",
+            )
+
+        monkeypatch.setattr(module, "http_get_text_with_retry", _fake_http_get_text_with_retry)
+
+        result = await web_fetch.execute(url="https://example.com", timeout=9)
+        assert "Hello" in result
+        assert "world" in result
+        assert captured["url"] == "https://example.com"
+        assert captured["timeout"] == 9
+        assert captured["headers"] == {"User-Agent": module._CFG.user_agent}
+        assert isinstance(captured["retry"], HttpRetryConfig)
+
+    @pytest.mark.asyncio
+    async def test_timeout_from_retry_helper_is_mapped(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        module = sys.modules["agent_app.tools.web.web_fetch"]
+
+        async def _fake_http_get_text_with_retry(
+            url: str,
+            *,
+            headers: dict[str, str] | None = None,
+            timeout: int = 30,
+            retry: HttpRetryConfig,
+        ) -> HttpTextResponse:
+            _ = (url, headers, timeout, retry)
+            raise TimeoutError
+
+        monkeypatch.setattr(module, "http_get_text_with_retry", _fake_http_get_text_with_retry)
+
+        result = await web_fetch.execute(url="https://example.com", timeout=7)
+        assert result == "Error: request timed out after 7s"
+
+    @pytest.mark.asyncio
+    async def test_pdf_content_type_still_short_circuits(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        module = sys.modules["agent_app.tools.web.web_fetch"]
+
+        async def _fake_http_get_text_with_retry(
+            url: str,
+            *,
+            headers: dict[str, str] | None = None,
+            timeout: int = 30,
+            retry: HttpRetryConfig,
+        ) -> HttpTextResponse:
+            _ = (url, headers, timeout, retry)
+            return HttpTextResponse(
+                status=200,
+                headers={"Content-Type": "application/pdf"},
+                body="ignored",
+            )
+
+        monkeypatch.setattr(module, "http_get_text_with_retry", _fake_http_get_text_with_retry)
+
+        result = await web_fetch.execute(url="https://example.com/file.pdf")
+        assert "URL is a PDF document" in result
 
 
 class TestTextExtractor:
