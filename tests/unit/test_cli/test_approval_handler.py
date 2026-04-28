@@ -217,6 +217,102 @@ def test_always_label_command_chained_shows_all_prefixes() -> None:
     assert "commands" in label
 
 
+async def test_unsafe_shell_command_hides_always_option_in_panel() -> None:
+    """Heredoc / redirect commands hit policy's unsafe-shell fallback —
+    no prefix grant will ever match, so panel must not advertise [A]lways."""
+    import io
+
+    from rich.console import Console as RConsole
+
+    from agent_cli.theme import FLEXOKI_DARK
+
+    buf = io.StringIO()
+    con = RConsole(file=buf, theme=FLEXOKI_DARK.rich, color_system=None, width=120)
+    h = CliApprovalHandler(console=con)
+    h.bind_agent(MagicMock(_bg_manager=MagicMock(get_all=MagicMock(return_value=[]))))
+
+    req = ApprovalRequest(
+        tool_call=ToolCall(id="t1", name="terminal_tool", arguments={}),
+        agent_name="cli",
+        resource="python - <<'PY'\nimport json\nPY",
+        resource_kind="command",
+    )
+    with _patch_prompt(h, return_value="y"):
+        await h.request_approval(req)
+
+    out = buf.getvalue()
+    assert "Always" not in out
+    assert "[A]" not in out
+
+
+async def test_unsafe_shell_command_uses_no_always_prompt_text() -> None:
+    """prompt_async must receive the no-[A] HTML when command is unsafe-shell."""
+    h = _handler_with_bg_tasks(bg_tasks=[])
+
+    seen: dict[str, object] = {}
+
+    async def _capture(prompt_text, **kwargs):  # type: ignore[no-untyped-def]
+        seen["prompt_text"] = prompt_text
+        return "y"
+
+    req = ApprovalRequest(
+        tool_call=ToolCall(id="t1", name="terminal_tool", arguments={}),
+        agent_name="cli",
+        resource="cat > /tmp/foo",
+        resource_kind="command",
+    )
+    with patch.object(h._pt_session, "prompt_async", AsyncMock(side_effect=_capture)):
+        await h.request_approval(req)
+
+    rendered = seen["prompt_text"].value  # type: ignore[union-attr]
+    assert "[A]" not in rendered
+    assert "Always" not in rendered
+    assert "[Y]" in rendered
+    assert "[N]" in rendered
+
+
+def test_parse_answer_a_falls_back_to_allow_once_when_session_disallowed() -> None:
+    """Defensive: if user types 'a' on a no-[A] prompt, treat as ALLOW_ONCE."""
+    result = CliApprovalHandler._parse_answer(
+        "a", _request(), allow_session=False,
+    )
+    assert result.decision == ApprovalDecision.ALLOW_ONCE
+
+
+def test_can_grant_session_unsafe_shell_returns_false() -> None:
+    req = ApprovalRequest(
+        tool_call=ToolCall(id="t1", name="terminal_tool", arguments={}),
+        agent_name="cli",
+        resource="python - <<'PY'\nprint(1)\nPY",
+        resource_kind="command",
+    )
+    assert CliApprovalHandler._can_grant_session(req) is False
+
+
+def test_can_grant_session_safe_shell_returns_true() -> None:
+    req = ApprovalRequest(
+        tool_call=ToolCall(id="t1", name="terminal_tool", arguments={}),
+        agent_name="cli",
+        resource="python script.py",
+        resource_kind="command",
+    )
+    assert CliApprovalHandler._can_grant_session(req) is True
+
+
+def test_can_grant_session_non_command_resource_returns_true() -> None:
+    """path / url / no-resource cases unchanged."""
+    req = ApprovalRequest(
+        tool_call=ToolCall(id="t1", name="edit_file", arguments={}),
+        agent_name="cli",
+        resource="src/auth.py",
+        resource_kind="path",
+    )
+    assert CliApprovalHandler._can_grant_session(req) is True
+
+    req2 = _request()
+    assert CliApprovalHandler._can_grant_session(req2) is True
+
+
 async def test_ctrl_c_during_approval_raises_cancelled_error() -> None:
     h = _handler_with_bg_tasks(bg_tasks=[])
     with _patch_prompt(h, raises=KeyboardInterrupt()):

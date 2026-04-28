@@ -20,7 +20,7 @@ from agent_cli.runtime import background
 from agent_cli.theme import APPROVAL, SEP_DOT
 from agent_harness.agent.base import BaseAgent
 from agent_harness.approval.handler import ApprovalHandler
-from agent_harness.approval.policy import derive_session_prefix
+from agent_harness.approval.policy import _UNSAFE_SHELL_RE, derive_session_prefix
 from agent_harness.approval.types import ApprovalDecision, ApprovalRequest, ApprovalResult
 
 if TYPE_CHECKING:
@@ -30,6 +30,10 @@ _COMMAND_CHAIN_RE = re.compile(r"\s*(?:&&|\|\||[;|])\s*")
 _DENY_REASON_SEPARATORS = ",，:：;；"
 _PROMPT_TEXT = HTML(
     f"Allow? <b>[Y]</b>es {SEP_DOT} <b>[A]</b>lways {SEP_DOT} "
+    "<b>[N]</b>o &lt;reason&gt; (default: Y): "
+)
+_PROMPT_TEXT_NO_ALWAYS = HTML(
+    f"Allow? <b>[Y]</b>es {SEP_DOT} "
     "<b>[N]</b>o &lt;reason&gt; (default: Y): "
 )
 
@@ -145,12 +149,16 @@ class CliApprovalHandler(ApprovalHandler):
                     f"[bold]{rich_escape(display)}[/bold]"
                 )
 
-            always_sentence = rich_escape(self._always_label(request))
-            panel_body = Text.from_markup(
-                f"{main_content}\n"
-                f"\n"
-                f"[muted]{always_sentence}[/muted]"
-            )
+            can_always = self._can_grant_session(request)
+            if can_always:
+                always_sentence = rich_escape(self._always_label(request))
+                panel_body = Text.from_markup(
+                    f"{main_content}\n"
+                    f"\n"
+                    f"[muted]{always_sentence}[/muted]"
+                )
+            else:
+                panel_body = Text.from_markup(main_content)
             self._console.print(
                 Panel(
                     panel_body,
@@ -178,7 +186,7 @@ class CliApprovalHandler(ApprovalHandler):
             self._pt_session.completer = None
             try:
                 raw = await self._pt_session.prompt_async(
-                    _PROMPT_TEXT,
+                    _PROMPT_TEXT if can_always else _PROMPT_TEXT_NO_ALWAYS,
                     set_exception_handler=False,
                 )
             finally:
@@ -189,7 +197,19 @@ class CliApprovalHandler(ApprovalHandler):
                 from agent_cli.runtime.sigint import restore_current
                 restore_current()
                 self._console.print()
-            return self._parse_answer(raw, request)
+            return self._parse_answer(raw, request, allow_session=can_always)
+
+    @staticmethod
+    def _can_grant_session(request: ApprovalRequest) -> bool:
+        """False when policy will not honor a prefix grant for this resource.
+
+        Mirrors policy._check_command's unsafe-shell fallback: heredocs,
+        redirects, backticks, newlines etc. force per-call ASK regardless
+        of session grants — so offering [A]lways would be a lie.
+        """
+        if request.resource_kind == "command" and request.resource:
+            return not _UNSAFE_SHELL_RE.search(request.resource)
+        return True
 
     @staticmethod
     def _always_label(request: ApprovalRequest) -> str:
@@ -225,14 +245,22 @@ class CliApprovalHandler(ApprovalHandler):
         return await fut
 
     @staticmethod
-    def _parse_answer(raw: str, request: ApprovalRequest) -> ApprovalResult:
+    def _parse_answer(
+        raw: str,
+        request: ApprovalRequest,
+        *,
+        allow_session: bool = True,
+    ) -> ApprovalResult:
         tc = request.tool_call
         choice = raw.strip()
         reason: str | None = None
         lowered = choice.casefold()
 
         if lowered in ("a", "always"):
-            decision = ApprovalDecision.ALLOW_SESSION
+            decision = (
+                ApprovalDecision.ALLOW_SESSION if allow_session
+                else ApprovalDecision.ALLOW_ONCE
+            )
         else:
             decision = ApprovalDecision.ALLOW_ONCE
             for prefix in ("no", "n"):
