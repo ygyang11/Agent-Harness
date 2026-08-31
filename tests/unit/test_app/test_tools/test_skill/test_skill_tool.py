@@ -111,10 +111,16 @@ class TestSkillToolExecution:
         result = await tool.execute(skill_name="tpl", args="world")
         assert "Hello world!" in result
 
-    async def test_resource_hints(self, tool: SkillTool) -> None:
+    async def test_resource_hints(self, tool: SkillTool, skills_dir: Path) -> None:
+        nested = skills_dir / "pdf" / "references" / "api"
+        nested.mkdir(parents=True)
+        (nested / "auth.md").write_text("auth", encoding="utf-8")
+
         result = await tool.execute(skill_name="pdf")
         assert "scripts/" in result
         assert "extract.py" in result
+        assert f"base path: {skills_dir / 'pdf'}" in result
+        assert "references/: api/auth.md" in result
 
 
 class TestSkillToolAutoRefresh:

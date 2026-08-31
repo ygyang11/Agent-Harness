@@ -22,9 +22,15 @@ def _format_resources(skill: Skill) -> str:
     resources = skill.list_resources()
     if not resources:
         return ""
-    lines = ["\nAvailable resources:"]
+    lines = [
+        "\nAvailable resources (read with read_file when needed; "
+        f"base path: {skill.dir}):"
+    ]
     for folder, files in resources.items():
-        names = ", ".join(f.name for f in files[:5])
+        names = ", ".join(
+            f.relative_to(skill.dir / folder).as_posix()
+            for f in files[:5]
+        )
         if len(files) > 5:
             names += f" ... ({len(files)} total)"
         lines.append(f"  - {folder}/: {names}")

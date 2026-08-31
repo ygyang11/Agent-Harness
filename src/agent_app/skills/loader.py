@@ -75,7 +75,7 @@ class SkillLoader:
     def _resolve_dirs(cls, dirs: list[str | Path]) -> list[Path]:
         resolved: list[Path] = []
         for d in dirs:
-            p = Path(d)
+            p = Path(d).expanduser()
             if p.is_absolute():
                 resolved.append(p)
             else:
