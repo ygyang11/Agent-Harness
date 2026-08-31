@@ -7,6 +7,9 @@ from agent_app.skills.loader import SkillLoader
 
 
 class TestSkillLoaderScan:
+    def test_resolve_dirs_expands_user_home(self) -> None:
+        assert SkillLoader._resolve_dirs(["~/skills"]) == [Path.home() / "skills"]
+
     def test_scan_valid_skills(self, skills_dir: Path) -> None:
         loader = SkillLoader([skills_dir])
         names = loader.list_names()
@@ -131,6 +134,18 @@ class TestSkillListResources:
         resources = skill.list_resources()
         assert "scripts" in resources
         assert any(f.name == "extract.py" for f in resources["scripts"])
+
+    def test_list_resources_includes_nested_files(self, skills_dir: Path) -> None:
+        nested = skills_dir / "pdf" / "references" / "api"
+        nested.mkdir(parents=True)
+        resource = nested / "auth.md"
+        resource.write_text("auth", encoding="utf-8")
+
+        loader = SkillLoader([skills_dir])
+        skill = loader.get_skill("pdf")
+        assert skill is not None
+        references = skill.list_resources()["references"]
+        assert resource in references
 
     def test_list_resources_empty(self, skills_dir: Path) -> None:
         loader = SkillLoader([skills_dir])
