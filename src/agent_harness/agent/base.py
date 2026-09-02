@@ -87,6 +87,7 @@ class BaseAgent(ABC, EventEmitter):
         system_prompt: System prompt for the agent.
         use_long_term_memory: If True, call_llm() queries long-term memory by default.
         config: Optional config used to create context when context is not provided.
+        include_guidelines: Whether the default prompt builder includes guidelines.
     """
 
     def __init__(
@@ -107,6 +108,7 @@ class BaseAgent(ABC, EventEmitter):
         approval_handler: ApprovalHandler | None = None,
         prompt_builder: SystemPromptBuilder | None = None,
         sandbox: SandboxBackend | None = None,
+        include_guidelines: bool = True,
     ) -> None:
         from agent_harness.prompt.runtime_context import RuntimeContextProvider
         from agent_harness.prompt.sections import create_default_builder, make_intro_section
@@ -157,7 +159,10 @@ class BaseAgent(ABC, EventEmitter):
             if system_prompt:
                 self._prompt_builder.register(make_intro_section(system_prompt))
         else:
-            self._prompt_builder = create_default_builder(system_prompt)
+            self._prompt_builder = create_default_builder(
+                system_prompt,
+                include_guidelines=include_guidelines,
+            )
         self.system_prompt = self._prompt_builder.build(self._make_builder_context())
 
         # Runtime context provider (ephemeral layer)

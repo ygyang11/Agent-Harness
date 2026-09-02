@@ -581,11 +581,16 @@ def make_custom_section(content: str) -> PromptSection:
 # ---------------------------------------------------------------------------
 
 
-def create_default_builder(system_prompt: str = "") -> SystemPromptBuilder:
-    """Create a SystemPromptBuilder with all standard sections.
+def create_default_builder(
+    system_prompt: str = "",
+    *,
+    include_guidelines: bool = True,
+) -> SystemPromptBuilder:
+    """Create a SystemPromptBuilder with standard sections.
 
-    All sections are registered by default. When system_prompt is provided,
-    it replaces the DEFAULT_INTRO as the intro section content.
+    When system_prompt is provided, it replaces the DEFAULT_INTRO as the intro
+    section content. Guidelines are included by default and can be omitted for
+    agents that need a lighter default prompt.
     """
     from agent_harness.prompt.system_builder import SystemPromptBuilder
 
@@ -593,7 +598,8 @@ def create_default_builder(system_prompt: str = "") -> SystemPromptBuilder:
 
     intro = system_prompt if system_prompt else DEFAULT_INTRO
     builder.register(make_intro_section(intro))
-    builder.register(make_guidelines_section())
+    if include_guidelines:
+        builder.register(make_guidelines_section())
     builder.register(make_tools_section())
     builder.register(make_skills_section())
     builder.register(make_instructions_section())
