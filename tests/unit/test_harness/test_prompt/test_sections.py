@@ -161,6 +161,19 @@ class TestCreateDefaultBuilder:
         result = builder.build({"tools": tools})
         assert "## Doing Tasks" in result
 
+    def test_guidelines_can_be_omitted(self) -> None:
+        builder = create_default_builder("Agent.", include_guidelines=False)
+        result = builder.build({"tools": [_FakeTool("read_file")]})
+
+        assert not builder.has("guidelines")
+        assert "## Doing Tasks" not in result
+        assert "## File Operations" in result
+
+    def test_guidelines_are_included_by_default(self) -> None:
+        builder = create_default_builder("Agent.")
+
+        assert builder.has("guidelines")
+
     def test_no_guidelines_without_tools(self) -> None:
         builder = create_default_builder("Agent.")
         result = builder.build({"tools": []})

@@ -13,7 +13,7 @@ from agent_harness.core.config import HarnessConfig, SkillConfig
 from agent_harness.core.errors import MaxStepsExceededError
 from agent_harness.core.message import Message, Role, ToolCall
 from agent_harness.llm.types import FinishReason, LLMResponse, Usage
-from agent_harness.prompt.sections import DEFAULT_INTRO
+from agent_harness.prompt.sections import DEFAULT_INTRO, create_default_builder
 from agent_harness.session.base import SessionState
 from agent_harness.session.memory_session import InMemorySession
 from tests.conftest import MockLLM, MockTool
@@ -270,6 +270,32 @@ class TestSkillPromptSupplement:
     def test_default_intro_when_no_system_prompt(self) -> None:
         agent = ReActAgent(name="test")
         assert DEFAULT_INTRO.split("\n")[0] in agent.system_prompt
+
+    def test_can_omit_default_guidelines(self) -> None:
+        agent = ReActAgent(
+            name="test",
+            tools=[MockTool()],
+            include_guidelines=False,
+        )
+
+        assert "## Doing Tasks" not in agent.system_prompt
+        assert "## File Operations" not in agent.system_prompt
+
+    def test_explicit_builder_is_not_changed_by_guidelines_flag(self) -> None:
+        builder = create_default_builder("Custom.")
+        agent = ReActAgent(
+            name="test",
+            tools=[MockTool()],
+            prompt_builder=builder,
+            include_guidelines=False,
+        )
+
+        assert "## Doing Tasks" in agent.system_prompt
+
+    def test_guidelines_are_included_by_default(self) -> None:
+        agent = ReActAgent(name="test", tools=[MockTool()])
+
+        assert "## Doing Tasks" in agent.system_prompt
 
 
 class TestStreamDefault:
